@@ -1,0 +1,14 @@
+{
+  "name": "al-dente",
+  "version": "1.0.0",
+  "description": "AL DENTE: a third-person Pac-Man-style spaghetti hunt in a Gaussian-splat park, built on the PlayCanvas engine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "playcanvas": "2.23.3"
+  }
+}

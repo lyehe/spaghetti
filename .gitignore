@@ -1,0 +1,15 @@
+node_modules/
+.gstack/
+.claude/
+
+# large source assets: re-download with tools/fetch_sources.sh, then rebuild (see README)
+assets/hero/src/
+spaces/*/scene.sog
+!spaces/apartment/scene.sog
+spaces/sunnyvale/collision.glb
+spaces/sunnyvale/collision_raw.obj
+spaces/apartment/voxel.*
+spaces/*/debug.png
+*.blend
+*.blend1
+__pycache__/
