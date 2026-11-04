@@ -103,6 +103,10 @@ export class Hero {
         this.look = null;                         // world point the head turns to
         this.leftSwing = 0;
         this.mouthW = null;                       // the real mouth (set by the skinned body)
+        this.air = 0; this.vy = 0;                // height of the feet above the ground (jumping) and vertical speed
+        this.land = 0;                            // 1 on touchdown, fades: the landing squash
+        this.emote = null; this.emoteT = 0;       // 'cheer' / 'dance' (mocap clips), and how long it lasts
+        this.emoteW = 0;                          // 0..1 how much the mocap owns the arms
     }
 
     stepFeet(dt) {
@@ -156,6 +160,25 @@ export class Hero {
         return true;
     }
 
+    // a dodge roll along (dx, dz) (or straight ahead): a burst of speed, a forward roll, a moment
+    // the monsters can't catch him
+    dodge(dx = 0, dz = 0) {
+        if (this.action || this.air > 0.1) return false;
+        const { fwd } = this.frame();
+        let l = Math.hypot(dx, dz);
+        if (l < 0.1) { dx = fwd[0]; dz = fwd[2]; l = 1; }
+        this.action = { type: 'dodge', t: 0, dur: 0.62, dir: [dx / l, dz / l] };
+        this.events.push('roll');
+        return true;
+    }
+
+    // a celebration from the mocap library while he stands still ('cheer' / 'dance')
+    celebrate(kind = 'cheer', dur = 2.6) {
+        if (this.action || this.speed > 0.6) return false;
+        this.emote = kind; this.emoteT = dur;
+        return true;
+    }
+
     // one bite of the food at `target` (world point): kind 'fork' (stab, twirl, shovel it in) or
     // 'hand' (grab a fistful and stuff it in). Hold the button and the game chains them.
     eat(target, kind = 'fork') {
@@ -179,6 +202,12 @@ export class Hero {
             return { ...base, ...lerpPose(P.ready, P.run, run) };
         }
         const t = a.t;
+        if (a.type === 'dodge') {
+            // tuck into a ball, fork hugged to the chest
+            const u = t / a.dur, k = Math.sin(Math.PI * Math.min(1, u * 1.15));
+            this.strikeActive = false;
+            return { ...base, hand: v3(0.16, 1.0, 0.22), dir: v3(0.2, 0.9, 0.3), crouch: 0.42 * k, bow: k, left: v3(-0.16, 0.95, 0.24), leftMode: 'open', fist: 0.8 };
+        }
         if (a.type === 'strike') {
             // windup 0-0.18, thrust 0.18-0.3 (hits), recover 0.3-0.55
             this.strikeActive = t > 0.18 && t < 0.32;
@@ -312,6 +341,9 @@ export class Hero {
             // a physics capsule (the PlayCanvas character controller) moves the body; the rig follows it
             const e = input.external;
             this.x = e.x; this.z = e.z; this.vx = e.vx; this.vz = e.vz;
+            const wasAir = this.air;
+            this.air = e.air || 0; this.vy = e.vy || 0;
+            if (wasAir > 0.12 && this.air < 0.04) { this.land = Math.min(1, 0.4 + wasAir * 1.5 + Math.max(0, -this.vy) * 0.1); this.events.push('land'); }
         } else {
             const k = Math.min(1, dt * 9);
             this.vx += (tvx - this.vx) * k;
@@ -326,13 +358,24 @@ export class Hero {
 
         // face the move direction; face the view while fighting, the food while eating
         let want = this.yaw;
-        if (act && act.type === 'eat') want = Math.atan2(act.target[0] - this.x, act.target[2] - this.z);
+        if (act && act.type === 'dodge') {
+            const u = act.t / act.dur, v = u < 0.8 ? 6.2 * (1 - u * 0.7) : 1.5;     // a burst, easing off
+            this.wantVel = [act.dir[0] * v, act.dir[1] * v];
+            if (!input.external) { this.vx = this.wantVel[0]; this.vz = this.wantVel[1]; }
+        }
+        this.land = Math.max(0, this.land - dt * 3.5);
+        // celebrations end when he moves or does anything else
+        if (this.emote && ((this.emoteT -= dt) <= 0 || this.speed > 0.6 || act)) this.emote = null;
+        this.emoteW += ((this.emote ? 1 : 0) - this.emoteW) * Math.min(1, dt * 5);
+        if (act && act.type === 'dodge') want = Math.atan2(act.dir[0], act.dir[1]);
+        else if (act && act.type === 'eat') want = Math.atan2(act.target[0] - this.x, act.target[2] - this.z);
         else if (busy) want = input.camYaw;
         else if (this.speed > 0.3) want = Math.atan2(this.vx, this.vz);
         let dy = want - this.yaw;
         while (dy > Math.PI) dy -= Math.PI * 2;
         while (dy < -Math.PI) dy += Math.PI * 2;
-        this.yaw += dy * Math.min(1, dt * (busy ? 14 : 9));
+        this.yawRate = dt > 0 ? dy * Math.min(1, dt * (busy ? 14 : 11)) / dt : 0;   // for banking into turns
+        this.yaw += dy * Math.min(1, dt * (busy ? 14 : 11));
 
         // chewing never stops while there is food in his mouth
         this.mouthful = Math.max(0, this.mouthful - dt * 0.2);
@@ -423,8 +466,9 @@ export class Hero {
         // outdoor terrain: the rig runs on a flat local floor; lift every world-facing point onto the ground
         const gyT = this.level.ground ? this.level.groundAt(this.x, this.z) : 0;
         this.gy = this.gy === undefined || dt === 0 ? gyT : this.gy + (gyT - this.gy) * Math.min(1, dt * 12);
-        if (this.gy) {
-            const up = (v) => [v[0], v[1] + this.gy, v[2]];
+        const lift = this.gy + this.air;            // terrain height, plus the jump
+        if (lift) {
+            const up = (v) => [v[0], v[1] + lift, v[2]];
             for (const k in J) J[k] = up(J[k]);
             this.headPos = J.head;
             this.handR = up(this.handTarget);

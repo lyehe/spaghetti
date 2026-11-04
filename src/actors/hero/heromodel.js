@@ -19,7 +19,7 @@ const B = {
     clavL: 'Bip01 L Clavicle', upL: 'Bip01 L UpperArm', foreL: 'Bip01 L Forearm', handL: 'Bip01 L Hand',
     thighL: 'Bip01 L Thigh', calfL: 'Bip01 L Calf', footL: 'Bip01 L Foot', thighR: 'Bip01 R Thigh', calfR: 'Bip01 R Calf', footR: 'Bip01 R Foot'
 };
-const WALK_SPEED = 1.39, RUN_SPEED = 3.06;     // metres / second the clips were captured at
+const WALK_SPEED = 1.39, RUN_SPEED = 3.06, SPRINT_SPEED = 5.0;     // metres / second the clips were captured at
 
 const V = (e) => e.getPosition().clone();
 const tmpQ = new pc.Quat(), tmpQ2 = new pc.Quat();
@@ -75,28 +75,41 @@ export class HeroModel {
         for (const [k, n] of Object.entries(B)) this.bones[k] = model.findByName(n);
         this.tuneMaterials(model);
 
-        // locomotion: idle <-> (walk/run blend, phase-synced)
+        // the mocap state machine: idle <-> locomotion (walk / run / sprint, phase-synced blend), plus
+        // celebrations (cheer, dance) that play while he stands still
         model.addComponent('anim', { activate: true });
-        const P = pc.ANIM_PARAMETER_FLOAT;
+        const P = pc.ANIM_PARAMETER_FLOAT, I = pc.ANIM_PARAMETER_INTEGER;
+        const speedAbove = (v) => ({ parameterName: 'speed', predicate: pc.ANIM_GREATER_THAN, value: v });
+        const emoteIs = (v) => ({ parameterName: 'emote', predicate: pc.ANIM_EQUAL_TO, value: v });
         model.anim.loadStateGraph({
             layers: [{
                 name: 'base',
                 states: [{ name: 'START' }, { name: 'Idle', speed: 1, loop: true }, {
                     name: 'Move', speed: 1, loop: true,
-                    blendTree: { type: pc.ANIM_BLEND_1D, parameter: 'speed', syncAnimations: true, children: [{ name: 'walk', point: WALK_SPEED }, { name: 'run', point: RUN_SPEED }] }
-                }],
+                    blendTree: { type: pc.ANIM_BLEND_1D, parameter: 'speed', syncAnimations: true, children: [
+                        { name: 'walk', point: WALK_SPEED }, { name: 'run', point: RUN_SPEED }, { name: 'sprint', point: SPRINT_SPEED }] }
+                }, { name: 'Cheer', speed: 1, loop: true }, { name: 'Dance', speed: 1, loop: true }],
                 transitions: [
                     { from: 'START', to: 'Idle' },
-                    { from: 'Idle', to: 'Move', time: 0.18, conditions: [{ parameterName: 'speed', predicate: pc.ANIM_GREATER_THAN, value: 0.35 }] },
-                    { from: 'Move', to: 'Idle', time: 0.25, conditions: [{ parameterName: 'speed', predicate: pc.ANIM_LESS_THAN, value: 0.25 }] }
+                    { from: 'Idle', to: 'Move', time: 0.18, conditions: [speedAbove(0.35)] },
+                    { from: 'Move', to: 'Idle', time: 0.25, conditions: [{ parameterName: 'speed', predicate: pc.ANIM_LESS_THAN, value: 0.25 }] },
+                    { from: 'Idle', to: 'Cheer', time: 0.3, conditions: [emoteIs(1)] },
+                    { from: 'Idle', to: 'Dance', time: 0.4, conditions: [emoteIs(2)] },
+                    { from: 'Cheer', to: 'Idle', time: 0.35, conditions: [emoteIs(0)] },
+                    { from: 'Dance', to: 'Idle', time: 0.4, conditions: [emoteIs(0)] },
+                    { from: 'Cheer', to: 'Move', time: 0.2, conditions: [speedAbove(0.5)] },
+                    { from: 'Dance', to: 'Move', time: 0.2, conditions: [speedAbove(0.5)] }
                 ]
             }],
-            parameters: { speed: { name: 'speed', type: P, value: 0 } }
+            parameters: { speed: { name: 'speed', type: P, value: 0 }, emote: { name: 'emote', type: I, value: 0 } }
         });
         const clip = (name) => asset.resource.animations.find(a => a.resource.name === name || a.name.endsWith(name))?.resource;
         model.anim.assignAnimation('Idle', clip('idle'));
         model.anim.assignAnimation('Move.walk', clip('walk'));
         model.anim.assignAnimation('Move.run', clip('run'));
+        if (clip('sprint')) model.anim.assignAnimation('Move.sprint', clip('sprint'));
+        if (clip('cheer')) model.anim.assignAnimation('Cheer', clip('cheer'));
+        if (clip('dance')) model.anim.assignAnimation('Dance', clip('dance'));
 
         // the Great Fork
         this.fork = new pc.Entity('fork');
@@ -129,14 +142,14 @@ export class HeroModel {
     update(dt) {
         const h = this.hero, b = this.bones, e = this.entity, level = h.level;
         const k = 1 + 0.18 * this.power;          // spinach-strong: a bigger, bulkier diner
-        const gy = h.gy || 0;
-        e.setPosition(h.x, gy, h.z);
-        e.setEulerAngles(0, h.yaw * pc.math.RAD_TO_DEG, 0);
+        const gy = h.gy || 0, air = h.air || 0;
+        this.placeBody(h, gy + air);
         e.setLocalScale(k, k, k);
-        const spd = h.speed / k;
+        const spd = air > 0.05 ? 0 : h.speed / k;        // in the air the legs stop running
         this.model.anim.setFloat('speed', spd);
+        this.model.anim.setInteger('emote', h.emote === 'cheer' ? 1 : h.emote === 'dance' ? 2 : 0);
         // match the clip's stride to the ground speed (feet don't skate)
-        const nat = spd < WALK_SPEED ? WALK_SPEED : spd > RUN_SPEED ? RUN_SPEED : spd;
+        const nat = spd < WALK_SPEED ? WALK_SPEED : spd > SPRINT_SPEED ? SPRINT_SPEED : spd;
         this.model.anim.speed = spd > 0.35 ? Math.min(1.6, Math.max(0.6, spd / nat)) : 1;
 
         // remove the captured root motion (the game moves the body)
@@ -150,12 +163,15 @@ export class HeroModel {
         // ---- legs: squat, and plant each foot on its own patch of ground
         const feet = [['L', b.thighL, b.calfL, b.footL], ['R', b.thighR, b.calfR, b.footR]].map(([s, th, ca, fo]) => {
             const p = V(fo), rot = fo.getRotation().clone();
-            const g = level && level.ground ? clamp(level.groundAt(p.x, p.z) - gy, -0.3, 0.3) : 0;
+            const g = level && level.ground && air < 0.02 ? clamp(level.groundAt(p.x, p.z) - gy, -0.3, 0.3) : 0;
             return { s, th, ca, fo, rot, target: new pc.Vec3(p.x, p.y + g, p.z), g };
         });
         // the stride phase (for the free arm's swing): which foot is ahead
         this.stride = feet[1].target.clone().sub(feet[0].target).dot(F);
-        const drop = h.crouch * k + Math.max(0, -Math.min(feet[0].g, feet[1].g));
+        // airborne: knees pulled up (more on the way up, legs reaching down before touchdown)
+        const tuck = air > 0.03 ? clamp(air / 0.3, 0, 1) * (h.vy > 0 ? 1 : 0.6) : 0;
+        if (tuck > 0) for (const f of feet) { f.target.y += 0.26 * tuck * k; f.target.x += F.x * 0.08 * tuck; f.target.z += F.z * 0.08 * tuck; }
+        const drop = (h.crouch + 0.17 * (h.land || 0)) * k + Math.max(0, -Math.min(feet[0].g, feet[1].g));
         if (drop > 0.002) {
             // squat: hips back and down, feet stay put; knees push forward over the toes
             const pp = V(b.pelvis);
@@ -163,7 +179,7 @@ export class HeroModel {
             rotateWorld(b.pelvis, Ax, h.crouch * 25);
         }
         for (const f of feet) {
-            if (drop <= 0.002 && Math.abs(f.g) < 0.005) continue;
+            if (drop <= 0.002 && Math.abs(f.g) < 0.005 && tuck <= 0) continue;
             const side = f.s === 'L' ? -1 : 1;
             const out = (0.15 + h.crouch * 0.8) * side;
             this.ik(f.th, f.ca, f.fo, f.target, new pc.Vec3(F.x + R.x * out, 0.05, F.z + R.z * out));
@@ -176,6 +192,10 @@ export class HeroModel {
         rotateWorld(b.spine0, Ax, fold * 0.35);
         rotateWorld(b.spine, Ax, lean * 30 + fold * 0.35);
         rotateWorld(b.spine2, Ax, fold * 0.3);
+        // bank into turns at speed, like a runner
+        const bank = clamp(-(h.yawRate || 0) * h.speed * 2.2, -14, 14);
+        this.bank = (this.bank || 0) + (bank - (this.bank || 0)) * Math.min(1, dt * 8);
+        rotateWorld(b.spine0, F, this.bank);
         if (h.action && h.action.type === 'strike') {
             const t = h.action.t;
             const tw = t < 0.18 ? -16 * t / 0.18 : t < 0.32 ? -16 + 36 * (t - 0.18) / 0.14 : 20 * (1 - (t - 0.32) / 0.23);
@@ -198,6 +218,11 @@ export class HeroModel {
         // ---- face
         this.face(dt, R, F, Ax);
 
+        // the mocap owns the arms during a celebration: remember its pose, blend the IK back over it
+        const ew = h.emoteW || 0;
+        const armBones = ew > 0.01 ? this.armChain() : null;
+        const saved = armBones ? armBones.map(bn => bn.getLocalRotation().clone()) : null;
+
         // ---- right arm -> fork keyframe target; the shoulder shrugs up when the hand is high
         const lift = (v) => { const p = new pc.Vec3(...v); p.y = gy + (p.y - gy) * k; return p; };   // keyframes are for the unscaled body
         const dir = new pc.Vec3(...h.forkDir).normalize();
@@ -211,19 +236,43 @@ export class HeroModel {
         // ---- left arm
         let lt;
         if (h.leftMode === 'swing' || !h.leftTarget) {
-            // hangs relaxed and swings opposite the left foot
-            const sh = V(b.upL), sw = clamp(this.stride / 0.4, -1, 1) * Math.min(1, h.speed / 1.2);
-            lt = sh.add(new pc.Vec3(-R.x * 0.07 + F.x * (0.06 + 0.2 * sw), -0.54 * k, -R.z * 0.07 + F.z * (0.06 + 0.2 * sw)));
+            // hangs relaxed and swings opposite the left foot; flung out for balance in the air
+            const sh = V(b.upL), sw = clamp(this.stride / 0.4, -1, 1) * Math.min(1, h.speed / 1.2) * (1 - tuck);
+            const out = 0.07 + 0.3 * tuck, up = -0.54 + 0.42 * tuck;
+            lt = sh.add(new pc.Vec3(-R.x * out + F.x * (0.06 + 0.2 * sw), up * k, -R.z * out + F.z * (0.06 + 0.2 * sw)));
         } else lt = lift(h.leftTarget);
         this.shrug(b.clavL, b.upL, lt, F);
         const poleL = new pc.Vec3(-R.x * 0.7 - F.x * 0.2, -0.7, -R.z * 0.7 - F.z * 0.2);
         this.ik(b.upL, b.foreL, b.handL, lt.clone().sub(this.palmOff.L), poleL);
-        const palmL = this.leftHand(h, R, F);
+        let palmL = this.leftHand(h, R, F);
         this.palmOff.L.copy(palmL).sub(V(b.handL));
+        let forkDir = h.forkDir;
+        if (saved) {
+            armBones.forEach((bn, i) => bn.setLocalRotation(new pc.Quat().slerp(bn.getLocalRotation(), saved[i], ew)));
+            // the fork rides along in the cheering hand, along its knuckle line
+            const fr = this.handFrame('R'), fl = this.handFrame('L');
+            const palmA = fr.H.clone().add(fr.fdir.clone().mulScalar(0.07)).add(fr.n.clone().mulScalar(0.03));
+            palmR.lerp(palmR, palmA, ew);
+            palmL = fl.H.clone().add(fl.fdir.clone().mulScalar(0.065)).add(fl.n.clone().mulScalar(0.025));
+            const d = dir.clone().lerp(dir, fr.across, ew).normalize();
+            forkDir = [d.x, d.y, d.z];
+        }
+
+        // ---- dodge: roll the finished pose, then find the hands again
+        const rollQ = this.roll(h, gy + air, k);
+        if (rollQ) {
+            const fr = this.handFrame('R'), fl = this.handFrame('L');
+            palmR.copy(fr.H.clone().add(fr.fdir.clone().mulScalar(0.07)).add(fr.n.clone().mulScalar(0.03)));
+            palmL = fl.H.clone().add(fl.fdir.clone().mulScalar(0.065)).add(fl.n.clone().mulScalar(0.025));
+            const d = rollQ.transformVector(new pc.Vec3(...forkDir), new pc.Vec3());
+            forkDir = [d.x, d.y, d.z];
+            dir.copy(d);
+        }
 
         // ---- fork: its grip (origin) sits in the right palm
         this.fork.setPosition(palmR.clone().sub(dir.clone().mulScalar((h.gripSlide || 0) * k)));   // choked up the handle
-        this.fork.setRotation(forkRotation(h.forkDir, h.forkSideW || right, h.forkRoll * pc.math.RAD_TO_DEG));
+        const side = rollQ ? rollQ.transformVector(new pc.Vec3(...(h.forkSideW || right)), new pc.Vec3()) : null;
+        this.fork.setRotation(forkRotation(forkDir, side ? [side.x, side.y, side.z] : (h.forkSideW || right), h.forkRoll * pc.math.RAD_TO_DEG));
         this.fork.setLocalScale(k, k, k);
 
         // ---- report the real hand / head / mouth back to the gameplay rig
@@ -236,6 +285,36 @@ export class HeroModel {
             h.mouthW = [m.x + fwd[0] * 0.015, m.y, m.z + fwd[2] * 0.015];
         }
         this.sauce.set(this.mess);
+    }
+
+    // the body's root: on the ground (plus the jump), facing the rig's yaw; a dodge rolls it forward
+    // head over heels around its middle
+    placeBody(h, y) {
+        this.entity.setPosition(h.x, y, h.z);
+        this.entity.setEulerAngles(0, h.yaw * pc.math.RAD_TO_DEG, 0);
+    }
+
+    // a dodge: the finished (tucked) pose rolls forward head over heels around its middle. Returns
+    // the roll as a world rotation (for whatever is attached to the body), or null.
+    roll(h, y, k) {
+        const a = h.action;
+        if (!a || a.type !== 'dodge') return null;
+        const u = Math.min(1, a.t / (a.dur * 0.85));
+        const ang = 360 * (u * u * (3 - 2 * u));
+        const yawQ = new pc.Quat().setFromEulerAngles(0, h.yaw * pc.math.RAD_TO_DEG, 0);
+        const q = yawQ.clone().mul(new pc.Quat().setFromAxisAngle(pc.Vec3.RIGHT, ang));   // local +x tips the face forward
+        const c = new pc.Vec3(0, 0.42 * k, 0), rc = q.transformVector(c, new pc.Vec3()), yc = yawQ.transformVector(c, new pc.Vec3());
+        this.entity.setRotation(q);
+        this.entity.setPosition(h.x + yc.x - rc.x, y + yc.y - rc.y, h.z + yc.z - rc.z);
+        return q.clone().mul(yawQ.clone().invert());
+    }
+
+    // arm, hand and finger bones (blended between the mocap and the IK)
+    armChain() {
+        if (this._arms) return this._arms;
+        const b = this.bones, out = [b.clavR, b.upR, b.foreR, b.handR, b.clavL, b.upL, b.foreL, b.handL];
+        for (const side of ['R', 'L']) { const f = this.fingers(side); if (f) for (const c of Object.values(f)) out.push(...c); }
+        return (this._arms = out.filter(Boolean));
     }
 
     // jaw open / chewing, cheeks stuffed, lips pushed out while slurping

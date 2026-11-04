@@ -12,7 +12,9 @@ giant fork **crushes** them into heaps of noodles you can eat. Without a meatbal
 
 | Action | Keyboard + mouse | Gamepad | Touch |
 |---|---|---|---|
-| move / run | WASD / Shift | left stick | left joystick |
+| move / sprint | WASD / hold Shift | left stick | left joystick |
+| jump (clear a monster's head) | Space | A | JUMP |
+| dodge roll (can't be caught mid-roll) | C / Ctrl | Y | ROLL |
 | look / zoom | mouse / wheel | right stick | right joystick |
 | strike (stun, or crush when meatball-strong) | left click | RT / RB / X | STRIKE |
 | eat (hold): stab-and-twirl forkfuls, stuffed fistfuls | right click | LT / LB / B | EAT |
@@ -40,7 +42,9 @@ the procedural sky · `?debug` (`window.__game`) · `?classic` the original worm
 - **Spaghetti monsters**: each monster is a Verlet worm simulation (20 points × N noodles) running in a
   Web Worker, wrapped around a procedurally animated skeleton (`src/sim/`, `src/actors/monsters/creature.js`).
   Strikes knock noodles loose; crushed monsters collapse into a pile that can pull itself back together.
-- **Hero**: a Microsoft Rocketbox avatar with mocap idle/walk/run, plus procedural layers: a squat with
+- **Hero**: a Microsoft Rocketbox avatar with mocap idle / walk / run / sprint and cheer / dance celebrations
+  (blended by an anim state graph), plus procedural layers: jump tuck and landing squash, a forward
+  dodge roll, banking into turns, a squat with
   leg IK (each foot on its own patch of terrain), spine folding over the food, a hammer grip on the fork
   whose wrist follows the forearm, a grabbing / stuffing left hand, and a face that chews with the
   cheeks full while sauce gets painted into the skin texture (`src/actors/hero/`).

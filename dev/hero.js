@@ -35,9 +35,9 @@ window.bench = {
     // eat: t is the fraction of the bite (0..1); strike: seconds
     pose(type, t, extra = {}) {
         const { fwd } = hero.frame();
-        const dur = type === 'eat' ? (extra.kind === 'hand' ? 0.9 : 1.05) : 0.55;
+        const dur = type === 'eat' ? (extra.kind === 'hand' ? 0.9 : 1.05) : type === 'dodge' ? 0.62 : 0.55;
         const target = [hero.x + fwd[0] * 0.8, level.groundAt(hero.x, hero.z) + 0.08, hero.z + fwd[2] * 0.8];
-        hero.action = { type, kind: extra.kind || 'fork', t: type === 'eat' ? t * dur : t, dur, target: S.target || target, fired: {} };
+        hero.action = { type, kind: extra.kind || 'fork', t: type === 'eat' || type === 'dodge' ? t * dur : t, dur, target: S.target || target, fired: {}, dir: [Math.sin(hero.yaw), Math.cos(hero.yaw)] };
         S.target = S.target || target;
         S.frozen = { type, t, extra };
     },
@@ -45,6 +45,8 @@ window.bench = {
     act(type) { S.frozen = null; hero.action = null; type === 'strike' ? hero.strike() : hero.eat([hero.x + Math.sin(hero.yaw) * 0.9, 0.05, hero.z + Math.cos(hero.yaw) * 0.9]); },
     cam(yaw, pitch, dist, y) { S.cam = [yaw, pitch, dist, y ?? S.cam[3]]; },
     walk(speed) { S.speed = speed; },
+    air(h, vy = 2) { S.air = h === null ? null : { h, vy }; },          // fake a jump: height of the feet, vertical speed
+    emote(kind, dur = 99) { S.frozen = null; hero.action = null; hero.celebrate(kind, dur); },
     power(on) { hero.power = on ? 1 : 0; body.power = on ? 1 : 0; },
     ready: true
 };
@@ -55,8 +57,8 @@ app.on('update', (dt) => {
         window.bench.pose(f.type, f.t, f.extra);
     }
     const z = S.speed;
-    hero.update(S.frozen ? 0 : dt, { x: 0, z: z > 0 ? Math.min(1, z / (z > 2.9 ? 4.6 : 2.9)) : 0, sprint: z > 2.9, camYaw: S.camYaw });
-    if (S.speed) { hero.x = level.start.x; hero.z = level.start.z; }          // a treadmill
+    const ext = S.air ? { x: hero.x, z: hero.z, vx: 0, vz: 0, air: S.air.h, vy: S.air.vy } : (S.speed ? { x: hero.x, z: hero.z, vx: Math.sin(hero.yaw) * S.speed, vz: Math.cos(hero.yaw) * S.speed, air: 0, vy: 0 } : null);
+    hero.update(S.frozen ? 0 : dt, { x: 0, z: 0, camYaw: S.camYaw, external: ext });
     body.update(dt);
     const [yaw, pitch, dist, ly] = S.cam, r = pc.math.DEG_TO_RAD;
     const tx = hero.x, tz = hero.z, ty = (hero.gy || 0) + ly;

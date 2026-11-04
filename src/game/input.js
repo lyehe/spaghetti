@@ -3,12 +3,12 @@ import * as pc from 'playcanvas';
 // Game actions from every device. Moving and looking come from PlayCanvas's ThirdPersonController
 // (keyboard / mouse / gamepad sticks / touch joysticks, see player.js); this class handles the
 // action buttons on top of it, plus a keyboard + mouse fallback when physics is unavailable.
-//   mouse:    LMB strike, RMB (hold) eat
-//   gamepad:  RT / RB / X strike, LT / LB / B (hold) eat, START start / resume   (PlayCanvas GamepadSource)
-//   touch:    on-screen STRIKE / EAT buttons
+//   mouse / keys:  LMB strike, RMB (hold) eat, C / Ctrl roll (Space jump and Shift sprint: the controller)
+//   gamepad:  RT / RB / X strike, LT / LB / B (hold) eat, Y roll, START start   (A jump: the controller)
+//   touch:    on-screen STRIKE / EAT / ROLL / JUMP buttons
 // Callbacks: onPress(action), onRelease(action) with action 'strike' | 'eat' | 'start'; onUnlock().
 const BTN = pc.GamepadSource.buttonCode;
-const PAD = { strike: [BTN.RT, BTN.RB, BTN.X], eat: [BTN.LT, BTN.LB, BTN.B], start: [BTN.START] };
+const PAD = { strike: [BTN.RT, BTN.RB, BTN.X], eat: [BTN.LT, BTN.LB, BTN.B], dodge: [BTN.Y], start: [BTN.START] };
 
 export class Input {
     constructor(canvas, overlay, rig, { onPress, onRelease, onUnlock }) {
@@ -17,7 +17,10 @@ export class Input {
         this.locked = false;
         this.touch = matchMedia('(pointer: coarse)').matches;
         this.onPress = onPress; this.onRelease = onRelease;
-        window.addEventListener('keydown', (e) => this.keys.add(e.code));
+        window.addEventListener('keydown', (e) => {
+            if (!e.repeat && (e.code === 'KeyC' || e.code === 'ControlLeft' || e.code === 'ControlRight')) onPress('dodge');
+            this.keys.add(e.code);
+        });
         window.addEventListener('keyup', (e) => this.keys.delete(e.code));
         window.addEventListener('blur', () => this.keys.clear());
         document.addEventListener('mousemove', (e) => { if (this.locked) rig.look(e.movementX, e.movementY); });
@@ -49,7 +52,7 @@ export class Input {
             b.addEventListener('touchend', (e) => { e.preventDefault(); this.onRelease(action); }, { passive: false });
             return b;
         };
-        this.buttons = [mk('STRIKE', 24, 150, 'strike'), mk('EAT', 120, 60, 'eat')];
+        this.buttons = [mk('STRIKE', 24, 150, 'strike'), mk('EAT', 120, 60, 'eat'), mk('ROLL', 24, 250, 'dodge'), mk('JUMP', 216, 30, 'jump')];
     }
 
     showTouch(on) { for (const b of this.buttons || []) b.style.display = on ? 'block' : 'none'; }

@@ -7,7 +7,8 @@ import { ThirdPersonController } from 'playcanvas/scripts/esm/third-person-contr
 //   - action moves (the lunge into a stab, shuffling up to food, standing still to eat, knock-backs)
 //   - the playable area: the capsule is kept on the occupancy grid the monsters can reach
 const RADIUS = 0.3, HEIGHT = 1.75;
-const WALK = 2.9, RUN = 4.6;
+const WALK = 3.0, RUN = 5.2;
+const JUMP = 330;                 // N·s on an 80 kg capsule: ~4.1 m/s up, about 0.8 m of air
 // the controller adds `speedGround * dt` of velocity per frame and damps it by 0.99 per ms;
 // at 60 fps that settles at speedGround * 0.0913 m/s
 const SPEED_K = 0.0913;
@@ -28,7 +29,7 @@ export class Player {
         e.addComponent('script');
         this.ctl = e.script.create(ThirdPersonController, {
             properties: {
-                camera, speedGround: WALK / SPEED_K, speedAir: 4, sprintMult: RUN / WALK, jumpForce: 0,
+                camera, speedGround: WALK / SPEED_K, speedAir: 6, sprintMult: RUN / WALK, jumpForce: JUMP,
                 lookSens: 0.12, initialPitch: 14, pitchMin: -25, pitchMax: 60,
                 cameraDistance: 3.2, cameraDistanceMin: 1.6, cameraDistanceMax: 7, cameraHeight: 0.75,
                 cameraMinHeightAboveCharacter: -0.3, cameraCollisionPadding: 0.3
@@ -37,6 +38,8 @@ export class Player {
         app.root.addChild(e);
         this.entity = e;
         this.rb = e.rigidbody;
+        this.jumped = false;
+        this.ctl.on('jump', () => { this.jumped = true; });
         this.joysticks();
     }
 
@@ -49,12 +52,22 @@ export class Player {
         if (!on) this.rb.linearVelocity = pc.Vec3.ZERO;
     }
 
+    // jump from a button the controller doesn't read itself (touch)
+    jump() {
+        if (!this.ctl._grounded || this.ctl.jumpForce <= 0) return false;
+        this.rb.applyImpulse(0, this.ctl.jumpForce, 0);
+        this.jumped = true;
+        return true;
+    }
+
     push(vx, vz) { const v = this.rb.linearVelocity; this.rb.linearVelocity = new pc.Vec3(vx, v.y, vz); }
 
     // after physics: steer, clamp to the playable grid, and report the body to the hero rig
     update(hero, power) {
         if (this.startYaw !== null && this.ctl._ready) { this.ctl._yaw = this.startYaw; this.startYaw = null; }
         this.ctl.speedGround = WALK / SPEED_K * (hero.action ? 0.5 : 1) * (1 + 0.15 * power);
+        // no jumping out of a bite or a roll
+        this.ctl.jumpForce = hero.action && hero.action.type !== 'strike' ? 0 : JUMP * (1 + 0.12 * power);
         if (hero.wantVel) this.push(hero.wantVel[0], hero.wantVel[1]);
         const p = this.entity.getPosition(), v = this.rb.linearVelocity;
         const q = { x: p.x, z: p.z };
@@ -64,7 +77,9 @@ export class Player {
             this.rb.teleport(q.x, Math.max(p.y, ground + HEIGHT / 2 + 0.02), q.z);
             this.rb.linearVelocity = new pc.Vec3(0, Math.max(0, v.y), 0);
         }
-        return { x: q.x, z: q.z, vx: v.x, vz: v.z };
+        const air = Math.max(0, this.entity.getPosition().y - HEIGHT / 2 - ground);
+        const jumped = this.jumped; this.jumped = false;
+        return { x: q.x, z: q.z, vx: v.x, vz: v.z, vy: v.y, air: air < 0.06 ? 0 : air, jumped };
     }
 
     teleport(x, z) { this.rb.teleport(x, this.level.groundAt(x, z) + HEIGHT / 2 + 0.05, z); this.rb.linearVelocity = pc.Vec3.ZERO; }

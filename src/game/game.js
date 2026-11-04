@@ -89,9 +89,11 @@ G.startPower = () => {
     G.shake = 0.4;
     hud.card('MEATBALL POWER!', 'One minute. They are running now — crush them and eat them.', 3);
     G.pack.scatter();
+    hero.celebrate('cheer', 1.6);
 };
 
 G.end = (mode, title, text) => {
+    if (mode === 'won') hero.celebrate('dance', 1e9);
     G.mode = mode;
     G.input.unlock();
     hud.overlay(title, text);
@@ -120,7 +122,7 @@ G.caught = (by) => {
 G.input = new Input(canvas, hud.overlayEl, G.rig, {
     onPress(action) {
         if (G.mode === 'won' || G.mode === 'lost') { location.reload(); return; }
-        if (G.mode !== 'play' || !G.input.ready) {
+        if (G.mode !== 'play' || !(G.input.ready || DEBUG)) {
             audio.start();
             G.input.lock();
             if (G.mode === 'intro') hud.card('They smell you.', 'Find a meatball. Then turn the tables.', 4);
@@ -131,6 +133,11 @@ G.input = new Input(canvas, hud.overlayEl, G.rig, {
         }
         if (action === 'strike' && hero.strike()) audio.whoosh();
         if (action === 'eat') G.eating.press();
+        if (action === 'dodge') {
+            // roll the way he is moving (or straight ahead); the monsters can't grab him mid-roll
+            if (hero.dodge(hero.vx, hero.vz)) { G.invuln = Math.max(G.invuln, 0.55); audio.whoosh(); }
+        }
+        if (action === 'jump' && G.player) G.player.jump();
     },
     onRelease(action) { if (action === 'eat') G.eating.release(); },
     onUnlock() { if (G.mode === 'play' && !G.input.touch && !G.input.padActive) { G.mode = 'paused'; G.input.showTouch(false); hud.overlay('PAUSED', 'click to keep eating'); } }
@@ -179,8 +186,12 @@ app.on('update', (rawDt) => {
         G.body.power += ((G.power > 0 ? 1 : 0) - G.body.power) * Math.min(1, dt * 3);
         G.body.update(dt);
     }
+    if (external && external.jumped) audio.whoosh();
     if (playing) {
-        for (const ev of hero.events) if (ev === 'step') audio.step(0.15);
+        for (const ev of hero.events) {
+            if (ev === 'step') audio.step(0.15);
+            else if (ev === 'land') { audio.step(0.5); G.sauce.burst([hero.x, (hero.gy || 0) + 0.05, hero.z], [0, 1, 0], 4, 1.2); }
+        }
         resolveStrike(G);
         G.eating.update();
     }

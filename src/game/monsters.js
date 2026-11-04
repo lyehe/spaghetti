@@ -37,7 +37,7 @@ export class Pack {
                 const dHero = Math.hypot(c.x - hero.x, c.z - hero.z);
                 // a monster that loses most of its noodles to bonks falls apart too
                 if (m.boundFrac < 0.45) crushMonster(G, m);
-                else if (playing && G.power <= 0 && G.invuln <= 0 && !c.stunned && dHero < 0.45 + 0.3 * m.scale) G.caught(m);
+                else if (playing && G.power <= 0 && G.invuln <= 0 && !c.stunned && hero.air < 0.45 * m.scale && dHero < 0.45 + 0.3 * m.scale) G.caught(m);
                 else {
                     const { fwd, right } = c.frame();
                     placeEyes(m.eyes, c.joints.head, fwd, right, hero.headPos, G.power > 0 || c.stunned);
@@ -51,6 +51,7 @@ export class Pack {
                     host.remove(m.id);
                     G.score += RULES.score.monster;
                     hud.card('Delizioso.', this.left ? `${this.left} left` : '', 2.5);
+                    hero.celebrate('cheer', 2.6);
                     continue;
                 }
                 // left alone without power for too long, the heap pulls itself back together

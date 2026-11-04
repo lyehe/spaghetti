@@ -1,6 +1,6 @@
 """Convert a Microsoft Rocketbox avatar + mocap clips (FBX, Biped rig) into one GLB for PlayCanvas.
 
-    blender -b --factory-startup --python tools/blender_hero.py -- <avatar.fbx> <out.glb> idle=<fbx> walk=<fbx> run=<fbx>
+    blender -b --factory-startup --python tools/blender_hero.py -- <avatar.fbx> <out.glb> idle=<fbx> walk=<fbx> run=<fbx> cheer=<fbx>@1-90 ...
 
 Textures are looked up next to the avatar FBX (the FBX references the artist's old paths), downscaled
 to 1024 px and embedded. Clips are retargeted by bone name (same Biped skeleton) and exported as
@@ -75,7 +75,9 @@ for m in bpy.data.materials:
 
 # ---- clips
 arm.animation_data_create()
-for name, path in clips.items():
+for name, spec in clips.items():
+    # name=file.fbx or name=file.fbx@start-end (keep only those frames)
+    path, _, rng = spec.partition('@')
     objs = imported(path)
     carm = next(o for o in objs if o.type == 'ARMATURE')
     act = carm.animation_data.action
@@ -97,6 +99,9 @@ for name, path in clips.items():
     track = arm.animation_data.nla_tracks.new()
     track.name = name
     strip = track.strips.new(name, int(act.frame_range[0]), act)
+    if rng:
+        a, b = (float(v) for v in rng.split('-'))
+        strip.action_frame_start, strip.action_frame_end = a, b
     if hasattr(strip, 'action_slot') and len(act.slots):
         strip.action_slot = act.slots[0]
     track.mute = False
