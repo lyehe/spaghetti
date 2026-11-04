@@ -1,13 +1,15 @@
 import * as pc from 'playcanvas';
+import { FORK } from './fork.js';
 
-// The player: a hungry diner with a giant fork, built from primitives on a procedural rig.
+// The player: a hungry diner with a giant fork. This is the gameplay rig: movement, actions, and the
+// targets the skinned body (heromodel.js) is posed to — hand / fork / head / crouch / face. It can
+// also draw itself from primitives (?prims, and the tests run it headless).
 //   legs:  planted-foot stepping + 2-bone IK (feet never slide)
-//   arms:  2-bone IK toward animated hand targets (keyframed in body space)
-//   head:  spring-lagged, tilts toward what he is eating, jaw chews
-//   fork:  held in the right hand, its direction/roll keyframed with the strike / eat moves
-// Left click = strike, right click = eat (twirl + slurp toward the mouth).
+//   arms:  targets keyframed in body space (strike) or placed on the world (food, mouth)
+//   eating: frantic, both hands: stab + twirl a forkful, stuff a fistful, chew with the cheeks full
+// Left click = strike, right click (hold) = eat.
 
-export const FORK_REACH = 1.28;    // palm -> tine tips (the Great Fork is 1.45 m long)
+export const FORK_REACH = FORK.reach;     // palm -> tine tips
 const THIGH = 0.46, SHIN = 0.47, UPPER = 0.31, FORE = 0.3;
 const HIP_W = 0.12, FOOT_W = 0.14, SHOULDER_W = 0.23;
 
@@ -18,16 +20,21 @@ const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const norm = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-const smooth = (t) => t * t * (3 - 2 * t);
+const smooth = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const seg = (u, a, b) => smooth((u - a) / (b - a));
 
-// keyframes for the right hand (body space: x right, y up, z forward) and the fork direction
+// right palm (body space: x right, y up from the floor, z forward) and the fork's handle direction
 const POSE = {
-    ready:   { hand: v3(0.24, 0.98, 0.26), dir: v3(-0.32, 0.8, 0.55) },   // two-handed, slanted across the body like a pitchfork
-    windup:  { hand: v3(0.3, 1.25, -0.12), dir: v3(-0.1, 0.55, 1) },    // pulled back at the hip, tines forward
-    strike:  { hand: v3(0.1, 1.0, 0.55), dir: v3(-0.05, -0.35, 1) },    // driven forward, both hands on the shaft
-    reach:   { hand: v3(0.2, 0.62, 0.62), dir: v3(0, -1, 0.35) },
-    mouth:   { hand: v3(0.16, 1.42, 0.32), dir: v3(-0.35, 0.35, -0.6) },
+    ready:  { hand: v3(0.3, 1.0, 0.27), dir: v3(0.12, 0.96, 0.2) },       // upright at his side like a trident, forearm level
+    run:    { hand: v3(0.27, 1.02, 0.26), dir: v3(0.0, 0.74, 0.67) },     // tipped forward on the run
+    windup: { hand: v3(0.3, 1.52, -0.08), dir: v3(0.03, 0.1, 1) },        // raised beside the head, tines forward
+    strike: { hand: v3(0.1, 1.12, 0.6), dir: v3(-0.06, -0.5, 1) },        // stabbed down and forward
+    aside:  { hand: v3(0.4, 0.86, 0.1), dir: v3(0.55, 0.75, -0.35) },     // held out to the side while the left hand eats
 };
+const BITE = { fork: 1.05, hand: 0.9 };   // seconds per bite (x0.72 when meatball-strong: frantic)
+// when, in a bite (0..1), the noodles are picked up and when they go in the mouth
+export const BITE_AT = { fork: { grab: 0.24, feed: 0.7 }, hand: { grab: 0.29, feed: 0.56 } };
 
 export class Hero {
     // visual: false builds only the rig (for tests / headless logic)
@@ -43,7 +50,7 @@ export class Hero {
         this.health = 100;
         this.action = null;           // { type: 'strike' | 'eat', t, dur, ... }
         this.strikeActive = false;    // true during the frames a strike can hit
-        this.events = [];             // 'step', 'swing', 'bite' for audio
+        this.events = [];             // 'step', 'swing', 'grab', 'feed' for the game / audio
         this.buildRig();
         if (visual) this.buildVisual();
         this.update(0, { x: 0, z: 0, sprint: false, camYaw: 0 });
@@ -52,12 +59,18 @@ export class Hero {
     // ------------------------------------------------------------------ rig
     frame() {
         const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
-        return { fwd: [s, 0, c], right: [c, 0, -s] };
+        return { fwd: [s, 0, c], right: [-c, 0, s] };      // facing +z with y up, the right hand is on -x
     }
 
-    toWorld(p) {   // body space -> world
+    toWorld(p) {   // body space -> world (y stays on the local floor; terrain is added at the end)
         const { fwd, right } = this.frame();
         return [this.x + right[0] * p[0] + fwd[0] * p[2], p[1], this.z + right[2] * p[0] + fwd[2] * p[2]];
+    }
+
+    toBody(w) {    // world (with terrain height) -> body space
+        const { fwd, right } = this.frame();
+        const dx = w[0] - this.x, dz = w[2] - this.z;
+        return [dx * right[0] + dz * right[2], w[1] - (this.gy || 0), dx * fwd[0] + dz * fwd[2]];
     }
 
     footHome(side) {
@@ -74,12 +87,22 @@ export class Hero {
         this.handR = this.toWorld(POSE.ready.hand);
         this.handTarget = this.handR.slice();     // smoothed keyframe target (a skinned body IKs to it)
         this.leftTarget = null;
+        this.leftMode = 'swing';                  // 'swing' (walking), 'open' (reaching / cupping), 'fist' (holding food)
+        this.leftFist = 0;                        // 0 open .. 1 a closed fist
         this.power = 0;                           // 0..1: meatball strength (faster, harder)
         this.forkDir = norm(POSE.ready.dir);
+        this.forkSide = [1, 0, 0];
         this.forkRoll = 0;
-        this.gripSlide = 0;                 // how far the hand has slid up the shaft (eating: choke up near the tines)
-        this.jaw = 0;
+        this.gripSlide = 0;                       // how far the hand has slid up the handle toward the tines
+        this.crouch = 0;                          // metres the pelvis drops (squatting over food)
+        this.bow = 0;                             // 0..1 how far he folds over the food
+        this.jaw = 0;                             // 0..1 mouth open
+        this.cheeks = 0;                          // 0..1 cheeks stuffed
+        this.mouthful = 0;                        // food in the mouth (chewing)
+        this.chewT = 0;
+        this.look = null;                         // world point the head turns to
         this.leftSwing = 0;
+        this.mouthW = null;                       // the real mouth (set by the skinned body)
     }
 
     stepFeet(dt) {
@@ -133,19 +156,28 @@ export class Hero {
         return true;
     }
 
-    // target: world point to eat from (the game picks the nearest noodles)
-    eat(target) {
+    // one bite of the food at `target` (world point): kind 'fork' (stab, twirl, shovel it in) or
+    // 'hand' (grab a fistful and stuff it in). Hold the button and the game chains them.
+    eat(target, kind = 'fork') {
         if (this.action) return false;
-        this.action = { type: 'eat', t: 0, dur: 1.5, target, bites: 0 };
+        const dur = BITE[kind] * (this.power > 0 ? 0.72 : 1);
+        this.action = { type: 'eat', kind, t: 0, dur, target, fired: {} };
         return true;
     }
 
-    // right-hand pose for the current action: returns { hand (body space), dir, roll, jaw, headDown, left }
+    // food went down: fills the mouth (the cheeks bulge, he chews harder)
+    swallow(strands) { this.mouthful = Math.min(1.4, this.mouthful + 0.16 + 0.07 * strands); }
+
+    // the current action as targets. Hands are body-space; `abs` means y is from the floor (food,
+    // mouth) instead of riding with the pelvis (keyframes).
     actionPose() {
-        const a = this.action;
-        const P = POSE;
+        const a = this.action, P = POSE;
+        const base = { slide: 0, roll: 0, jawOpen: 0, bow: 0, crouch: 0, left: null, leftAbs: false, leftMode: 'swing', fist: 0, look: null, abs: false };
         const lerpPose = (A, B, t) => ({ hand: lerp(A.hand, B.hand, t), dir: norm(lerp(A.dir, B.dir, t)) });
-        if (!a) return { ...P.ready, roll: 0, jaw: 0, headDown: 0, left: null };
+        if (!a) {
+            const run = clamp((this.speed - 2.4) / 1.5, 0, 1);
+            return { ...base, ...lerpPose(P.ready, P.run, run) };
+        }
         const t = a.t;
         if (a.type === 'strike') {
             // windup 0-0.18, thrust 0.18-0.3 (hits), recover 0.3-0.55
@@ -154,64 +186,157 @@ export class Hero {
             if (t < 0.18) p = lerpPose(P.ready, P.windup, smooth(t / 0.18));
             else if (t < 0.3) p = lerpPose(P.windup, P.strike, (t - 0.18) / 0.12);
             else p = lerpPose(P.strike, P.ready, smooth((t - 0.3) / 0.25));
-            return { ...p, roll: 0, jaw: t > 0.18 && t < 0.4 ? 0.6 : 0.1, headDown: 0.15, left: null };
+            // the free hand flings out for balance as he lunges
+            const bal = t < 0.18 ? smooth(t / 0.18) : t < 0.32 ? 1 : 1 - smooth((t - 0.32) / 0.23);
+            return { ...base, ...p, jawOpen: t > 0.18 && t < 0.4 ? 0.7 : 0.1, bow: 0.15 * bal, left: lerp(v3(-0.24, 0.82, 0.05), v3(-0.42, 1.05, 0.22), bal), leftMode: 'open' };
         }
-        // eat: reach 0-0.3, twirl 0.3-0.65, lift 0.65-0.9, chew 0.9-1.5
         this.strikeActive = false;
-        let p, roll = 0, jaw = 0, headDown = 0, left = null;
-        if (t < 0.3) { p = lerpPose(P.ready, P.reach, smooth(t / 0.3)); headDown = 0.5 * t / 0.3; }
-        else if (t < 0.65) { p = { ...P.reach }; roll = (t - 0.3) * 30; headDown = 0.5; left = v3(-0.12, 0.65, 0.55); }
-        else if (t < 0.9) { p = lerpPose(P.reach, P.mouth, smooth((t - 0.65) / 0.25)); headDown = 0.5 - (t - 0.65) * 1.2; jaw = 0.8; left = v3(-0.1, 1.25, 0.35); }
-        else { p = { ...P.mouth }; jaw = 0.35 + 0.35 * Math.sin((t - 0.9) * 28); headDown = -0.1; left = v3(-0.14, 1.35, 0.3); }
-        // a 1.45 m fork can only reach the mouth if the hand slides up the shaft toward the tines
-        const slide = t < 0.3 ? 0.55 * t / 0.3 : t < 0.65 ? 0.55 : t < 0.9 ? 0.55 + 0.3 * (t - 0.65) / 0.25 : 0.85;
-        return { ...p, roll, jaw, headDown, left, slide };
+        const u = t / a.dur;
+        const T = this.toBody(a.target);
+        const M = this.toBody(this.mouth);
+        const ty = T[1];
+        if (a.kind === 'fork') {
+            // dip 0-0.22 (stab the heap), twirl 0.22-0.47, lift 0.47-0.68, chomp 0.68-0.8, pull out
+            const C = clamp(0.5 - ty * 0.8, 0.12, 0.42);
+            const dDip = norm(v3(0.12, -0.72, 0.68));                          // stabbed in at an angle, arm out in front
+            const dipHand = sub(T, mul(dDip, FORK.reach - 0.05));
+            const SL = 0.3;                                                    // chokes up the handle to bring it to his mouth
+            const offs = mul(norm(v3(0.74, -0.22, 0.62)), FORK.reach - SL - 0.03);  // across the face from the right, tips just past the lips
+            const mouthHand = add(M, offs), mouthDir = norm(mul(offs, -1));
+            const turns = Math.PI * 2 * 2.5;
+            let hand, dir, roll = 0, crouch = C, bow = 0.85, jawOpen = 0, left, look = a.target, slide = 0;
+            const cup = add(T, v3(-0.2, 0.28, -0.12));
+            if (u < 0.22) {
+                const s = seg(u, 0, 0.22);
+                hand = add(dipHand, v3(0, 0.16 * (1 - s), -0.05 * (1 - s))); dir = dDip;
+                crouch = C * s; bow = 0.85 * s; left = cup;
+            } else if (u < 0.47) {
+                const s = (u - 0.22) / 0.25;
+                roll = s * turns;
+                hand = add(dipHand, v3(Math.cos(roll) * 0.025, 0.02 * s, Math.sin(roll) * 0.025)); dir = dDip; left = cup;
+            } else if (u < 0.68) {
+                const s = seg(u, 0.47, 0.68);
+                roll = turns + s * 1.2;
+                hand = add(lerp(dipHand, mouthHand, s), v3(0, Math.sin(Math.PI * s) * 0.1, 0));
+                dir = norm(lerp(dDip, mouthDir, s));
+                crouch = C + (C * 0.45 - C) * s; bow = 0.85 - 0.45 * s; slide = SL * seg(u, 0.47, 0.6);
+                jawOpen = seg(u, 0.56, 0.68);
+                left = lerp(cup, add(M, v3(-0.06, -0.24, 0.16)), s);          // cupped under the chin, catching drips
+                look = null;
+            } else {
+                const s = seg(u, 0.8, 1);
+                roll = turns + 1.2;
+                const inMouth = add(mouthHand, mul(mouthDir, 0.035));
+                hand = u < 0.8 ? inMouth : lerp(inMouth, add(mouthHand, v3(0.06, -0.14, 0.08)), s);
+                dir = mouthDir; crouch = C * 0.45; bow = 0.4; slide = SL * (1 - seg(u, 0.84, 1));
+                jawOpen = u < 0.72 ? 1 : 0;
+                left = add(M, v3(-0.06, -0.24, 0.16)); look = null;
+            }
+            return { ...base, hand, dir, roll, crouch, bow, jawOpen, left, leftAbs: true, leftMode: 'open', fist: 0, look, abs: true, slide };
+        }
+        // a fistful: reach 0-0.25, grab 0.25-0.34, lift 0.34-0.55, stuff 0.55-0.75, back down
+        const C = clamp(0.62 - ty, 0.25, 0.5);
+        const grabL = add(T, v3(0, 0.05, 0)), mouthL = add(M, v3(-0.015, -0.04, 0.075));
+        const rest = v3(-0.24, 0.8, 0.12);
+        let left, crouch = C, bow = 1, jawOpen = 0, fist = 0, look = a.target;
+        if (u < 0.25) { const s = seg(u, 0, 0.25); left = lerp(add(grabL, v3(0, 0.25, -0.1)), grabL, s); crouch = C * s; bow = s; }
+        else if (u < 0.34) { left = add(grabL, v3(0, -0.02, 0)); fist = seg(u, 0.25, 0.32); }
+        else if (u < 0.55) {
+            const s = seg(u, 0.34, 0.55);
+            left = add(lerp(grabL, mouthL, s), v3(0, Math.sin(Math.PI * s) * 0.06, 0));
+            fist = 1; crouch = C + (C * 0.5 - C) * s; bow = 1 - 0.55 * s; jawOpen = seg(u, 0.42, 0.55); look = null;
+        } else if (u < 0.75) {
+            // shove it in, wiggling
+            const w = Math.sin(u * 90) * 0.012;
+            left = add(mouthL, v3(w, -w * 0.5, -0.03 * seg(u, 0.55, 0.62)));
+            fist = 1 - 0.4 * seg(u, 0.62, 0.75); crouch = C * 0.5; bow = 0.45; jawOpen = u < 0.66 ? 1 : 0; look = null;
+        } else {
+            const s = seg(u, 0.75, 1);
+            left = lerp(mouthL, add(grabL, v3(0, 0.25, -0.1)), s * 0.6);
+            fist = 0.6 * (1 - s); crouch = C * 0.5; bow = 0.45 + 0.3 * s; look = null;
+        }
+        return { ...base, ...P.aside, crouch, bow, jawOpen, left, leftAbs: true, leftMode: fist > 0.3 ? 'fist' : 'open', fist, look };
     }
 
     // world position of the fork tines (hit point) and of the mouth (slurp target)
     get forkTip() { return add(this.handR, mul(this.forkDir, FORK_REACH - this.gripSlide)); }
+    get forkWad() { return add(this.handR, mul(this.forkDir, FORK.wad - this.gripSlide)); }
+    get fist() { return this.handL || this.leftTarget; }
     get mouth() {
+        if (this.mouthW) return this.mouthW;
         const { fwd } = this.frame();
-        return [this.headPos[0] + fwd[0] * 0.13, this.headPos[1] - 0.06, this.headPos[2] + fwd[2] * 0.13];
+        return [this.headPos[0] + fwd[0] * 0.11, this.headPos[1] - 0.08, this.headPos[2] + fwd[2] * 0.11];
     }
     get eating() { return this.action && this.action.type === 'eat'; }
     get slurping() { return this.eating && this.action.t > 0.6 && this.action.t < 1.2; }
+    // the fork as the noodle sim wants it: tip, handle axis, tine plane side, roll
+    get forkAnchor() { return [...this.forkTip, ...this.forkDir, ...this.forkSideW, this.forkRoll]; }
 
     // ------------------------------------------------------------------ update
     // input: { x, z } move axes in camera space, sprint, camYaw (radians, view heading)
     update(dt, input) {
         this.time += dt;
         this.events.length = 0;
-        if (this.action) {
-            this.action.t += dt;
-            if (this.action.t >= this.action.dur) { this.action = null; this.strikeActive = false; }
+        const a = this.action;
+        if (a) {
+            a.t += dt;
+            if (a.type === 'eat') {
+                const at = BITE_AT[a.kind], u = a.t / a.dur;
+                for (const ev of ['grab', 'feed']) if (!a.fired[ev] && u >= at[ev]) { a.fired[ev] = true; this.events.push(ev); }
+            }
+            if (a.t >= a.dur) { this.action = null; this.strikeActive = false; }
         }
 
         // movement relative to the camera; slower while busy
         const busy = !!this.action;
+        const { fwd } = this.frame();
         const cs = Math.sin(input.camYaw), cc = Math.cos(input.camYaw);
-        let mx = input.x * cc + input.z * cs, mz = -input.x * cs + input.z * cc;
+        // camera forward is (sin, cos); screen-right is (-cos, sin) (facing +z with y up, right is -x)
+        let mx = -input.x * cc + input.z * cs, mz = input.x * cs + input.z * cc;
         const ml = Math.hypot(mx, mz);
         if (ml > 1) { mx /= ml; mz /= ml; }
         const top = (input.sprint && !busy ? 4.6 : 2.9) * (busy ? 0.5 : 1) * (1 + 0.15 * this.power);
-        const k = Math.min(1, dt * 9);
-        this.vx += (mx * top - this.vx) * k;
-        this.vz += (mz * top - this.vz) * k;
-        this.x += this.vx * dt; this.z += this.vz * dt;
-        const p = { x: this.x, z: this.z };
-        this.level.collideCircle(p, 0.26);
-        if (dt > 0) { this.vx = (p.x - (this.x - this.vx * dt)) / dt; this.vz = (p.z - (this.z - this.vz * dt)) / dt; }
-        this.x = p.x; this.z = p.z;
+        let tvx = mx * top, tvz = mz * top;
+        const act = this.action;
+        // moves the actions make on their own: these override the player's steering
+        this.wantVel = null;
+        if (act && act.type === 'strike' && act.t > 0.14 && act.t < 0.32) { tvx += fwd[0] * 2.6; tvz += fwd[2] * 2.6; this.wantVel = [tvx, tvz]; }   // lunge into the stab
+        if (act && act.type === 'eat' && act.t / act.dur < 0.3) {
+            // shuffle up to the food: the tines reach ~0.8 m out, the hand ~0.5
+            const dx = act.target[0] - this.x, dz = act.target[2] - this.z, d = Math.hypot(dx, dz) || 1;
+            const gap = d - (act.kind === 'fork' ? 0.78 : 0.5);
+            if (Math.abs(gap) > 0.05) { const v = clamp(gap * 7, -1.5, 2.6); tvx = dx / d * v; tvz = dz / d * v; }
+            this.wantVel = [tvx, tvz];
+        } else if (act && act.type === 'eat') this.wantVel = [0, 0];                  // planted while he eats
+        if (input.external) {
+            // a physics capsule (the PlayCanvas character controller) moves the body; the rig follows it
+            const e = input.external;
+            this.x = e.x; this.z = e.z; this.vx = e.vx; this.vz = e.vz;
+        } else {
+            const k = Math.min(1, dt * 9);
+            this.vx += (tvx - this.vx) * k;
+            this.vz += (tvz - this.vz) * k;
+            this.x += this.vx * dt; this.z += this.vz * dt;
+            const p = { x: this.x, z: this.z };
+            this.level.collideCircle(p, 0.26);
+            if (dt > 0) { this.vx = (p.x - (this.x - this.vx * dt)) / dt; this.vz = (p.z - (this.z - this.vz * dt)) / dt; }
+            this.x = p.x; this.z = p.z;
+        }
         this.speed = Math.hypot(this.vx, this.vz);
 
-        // face the move direction; face the view while attacking / eating
+        // face the move direction; face the view while fighting, the food while eating
         let want = this.yaw;
-        if (busy) want = input.camYaw;
+        if (act && act.type === 'eat') want = Math.atan2(act.target[0] - this.x, act.target[2] - this.z);
+        else if (busy) want = input.camYaw;
         else if (this.speed > 0.3) want = Math.atan2(this.vx, this.vz);
         let dy = want - this.yaw;
         while (dy > Math.PI) dy -= Math.PI * 2;
         while (dy < -Math.PI) dy += Math.PI * 2;
         this.yaw += dy * Math.min(1, dt * (busy ? 14 : 9));
+
+        // chewing never stops while there is food in his mouth
+        this.mouthful = Math.max(0, this.mouthful - dt * 0.2);
+        this.chewT += dt * Math.PI * 2 * (this.power > 0 ? 5.2 : 4.2);
 
         this.pose(dt);
     }
@@ -220,12 +345,15 @@ export class Hero {
         const { fwd, right } = this.frame();
         this.stepFeet(dt);
         const ap = this.actionPose();
+        const ease = (cur, to, rate) => cur + (to - cur) * (dt > 0 ? Math.min(1, dt * rate) : 1);
+        this.crouch = ease(this.crouch, ap.crouch, 9);
+        this.bow = ease(this.bow, ap.bow, 10);
+        this.look = ap.look;
 
-        // pelvis: bob with the steps, lower while reaching down to eat
+        // pelvis: bob with the steps, squat over food
         const swing = this.feet.find(f => !f.planted);
         const bob = swing ? Math.sin(Math.PI * swing.t) * 0.035 : 0;
-        const crouch = ap.headDown > 0.3 ? 0.18 : 0;
-        let py = 0.98 + bob - crouch;
+        let py = 0.98 + bob - this.crouch;
         for (const f of this.feet) {
             const hip = [this.x + right[0] * f.side * HIP_W, this.z + right[2] * f.side * HIP_W];
             const hd = Math.hypot(f.pos[0] - hip[0], f.pos[2] - hip[1]);
@@ -234,23 +362,24 @@ export class Hero {
         }
         this.pelvisY += (py - this.pelvisY) * (dt > 0 ? Math.min(1, dt * 18) : 1);
 
-        // torso lean into acceleration / the strike
+        // torso lean into acceleration / the strike / over the food
         if (dt > 0) {
             const strikeLean = this.action && this.action.type === 'strike' ? (this.strikeActive ? 0.18 : -0.06) : 0;
-            const tl = [fwd[0] * (0.05 * Math.min(1, this.speed / 3) + strikeLean + ap.headDown * 0.25), fwd[2] * (0.05 * Math.min(1, this.speed / 3) + strikeLean + ap.headDown * 0.25)];
+            const f = 0.05 * Math.min(1, this.speed / 3) + strikeLean + this.bow * 0.3;
+            const tl = [fwd[0] * f, fwd[2] * f];
             for (let i = 0; i < 2; i++) { this.leanV[i] += ((tl[i] - this.lean[i]) * 90 - this.leanV[i] * 12) * dt; this.lean[i] += this.leanV[i] * dt; }
         }
+        this.headDown = this.bow * 0.6;
 
         const J = {};
         J.pelvis = [this.x, this.pelvisY, this.z];
-        J.chest = [this.x + this.lean[0], this.pelvisY + 0.46, this.z + this.lean[1]];
+        J.chest = [this.x + this.lean[0], this.pelvisY + 0.46 - this.bow * 0.08, this.z + this.lean[1]];
         J.neck = [J.chest[0] + this.lean[0] * 0.3, J.chest[1] + 0.2, J.chest[2] + this.lean[1] * 0.3];
-        const headT = [J.neck[0] + fwd[0] * (0.03 + ap.headDown * 0.12), J.neck[1] + 0.17 - ap.headDown * 0.05, J.neck[2] + fwd[2] * (0.03 + ap.headDown * 0.12)];
+        const headT = [J.neck[0] + fwd[0] * (0.03 + this.headDown * 0.12), J.neck[1] + 0.17 - this.headDown * 0.05, J.neck[2] + fwd[2] * (0.03 + this.headDown * 0.12)];
         if (!this.head || dt === 0) { this.head = headT; this.headV = [0, 0, 0]; }
         else for (let i = 0; i < 3; i++) { this.headV[i] += ((headT[i] - this.head[i]) * 220 - this.headV[i] * 18) * dt; this.head[i] += this.headV[i] * dt; }
         J.head = this.head.slice();
         this.headPos = J.head;
-        this.headDown = ap.headDown;
 
         // legs
         for (const f of this.feet) {
@@ -261,29 +390,36 @@ export class Hero {
             J['hip' + sd] = hip; J['knee' + sd] = mid; J['foot' + sd] = end;
         }
 
-        // right arm follows the action keyframes (smoothed so poses blend)
-        const handT = this.toWorldRel(ap.hand, J);
+        // right hand follows the action (smoothed so poses blend)
+        const handT = ap.abs ? this.toWorld(ap.hand) : this.toWorldRel(ap.hand, J);
         const kH = dt > 0 ? Math.min(1, dt * 22) : 1;
         this.handTarget = lerp(this.handTarget, handT, kH);
         this.handR = this.handTarget.slice();
         const dirW = norm(this.dirToWorld(ap.dir));
         this.forkDir = norm(lerp(this.forkDir, dirW, kH));
+        this.forkSideW = right.slice();
         this.forkRoll = ap.roll;
-        this.gripSlide += ((ap.slide || 0) - this.gripSlide) * (dt > 0 ? Math.min(1, dt * 10) : 1);
-        this.jaw += (ap.jaw - this.jaw) * (dt > 0 ? Math.min(1, dt * 25) : 1);
+        this.gripSlide = ease(this.gripSlide, ap.slide, 16);
+        // the face: mouth wide for a bite, otherwise chewing; cheeks bulge with food
+        const chew = this.mouthful > 0.03 ? (0.18 + 0.32 * (0.5 + 0.5 * Math.sin(this.chewT))) * Math.min(1, this.mouthful * 1.6) : 0;
+        this.jaw = ease(this.jaw, Math.max(ap.jawOpen, chew), 25);
+        this.cheeks = ease(this.cheeks, Math.min(1, this.mouthful), 6);
 
         const shR = [J.chest[0] + right[0] * SHOULDER_W, J.chest[1] + 0.1, J.chest[2] + right[2] * SHOULDER_W];
         const armR = this.ik(shR, this.handR, UPPER, FORE, [right[0] * 0.6, -0.8, right[2] * 0.6]);
         J.shR = shR; J.elR = armR.mid; J.haR = armR.end;
 
-        // left arm: swings with the walk, or helps shovel food while eating
+        // left hand: swings with the walk, or grabs / cups food
         this.leftSwing += dt * this.speed * 3.2;
         const sw = Math.sin(this.leftSwing) * Math.min(1, this.speed / 3);
-        const leftT = ap.left ? this.toWorldRel(ap.left, J) : this.toWorldRel(v3(-0.24, 0.8, 0.04 + sw * 0.22), J);
+        const leftT = ap.left ? (ap.leftAbs ? this.toWorld(ap.left) : this.toWorldRel(ap.left, J)) : this.toWorldRel(v3(-0.24, 0.8, 0.04 + sw * 0.22), J);
+        this.leftSmooth = this.leftSmooth && dt > 0 ? lerp(this.leftSmooth, leftT, Math.min(1, dt * 20)) : leftT;
+        this.leftMode = ap.leftMode;
+        this.leftFist = ease(this.leftFist, ap.fist, 20);
         const shL = [J.chest[0] - right[0] * SHOULDER_W, J.chest[1] + 0.1, J.chest[2] - right[2] * SHOULDER_W];
-        const armL = this.ik(shL, leftT, UPPER, FORE, [-right[0] * 0.6, -0.8, -right[2] * 0.6]);
+        const armL = this.ik(shL, this.leftSmooth, UPPER, FORE, [-right[0] * 0.6, -0.8, -right[2] * 0.6]);
         J.shL = shL; J.elL = armL.mid; J.haL = armL.end;
-        this.leftTarget = leftT;                  // always driven: hangs and swings with the walk, shovels while eating
+        this.leftTarget = this.leftSmooth;
         // outdoor terrain: the rig runs on a flat local floor; lift every world-facing point onto the ground
         const gyT = this.level.ground ? this.level.groundAt(this.x, this.z) : 0;
         this.gy = this.gy === undefined || dt === 0 ? gyT : this.gy + (gyT - this.gy) * Math.min(1, dt * 12);
@@ -292,9 +428,10 @@ export class Hero {
             for (const k in J) J[k] = up(J[k]);
             this.headPos = J.head;
             this.handR = up(this.handTarget);
-            this.leftTarget = up(leftT);
+            this.leftTarget = up(this.leftSmooth);
         }
         this.handTargetW = this.handR.slice();
+        if (!this.visual) { this.handL = J.haL; }
         this.lastPose = ap;
         this.J = J;
         if (this.visual) this.place(J);

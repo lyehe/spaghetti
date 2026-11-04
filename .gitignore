@@ -4,12 +4,12 @@ node_modules/
 
 # large source assets: re-download with tools/fetch_sources.sh, then rebuild (see README)
 assets/hero/src/
-spaces/*/scene.sog
-!spaces/apartment/scene.sog
-spaces/sunnyvale/collision.glb
-spaces/sunnyvale/collision_raw.obj
-spaces/apartment/voxel.*
-spaces/*/debug.png
+assets/spaces/*/scene.sog
+!assets/spaces/apartment/scene.sog
+assets/spaces/sunnyvale/collision.glb
+assets/spaces/sunnyvale/collision_raw.obj
+assets/spaces/apartment/voxel.*
+assets/spaces/*/debug.png
 *.blend
 *.blend1
 __pycache__/

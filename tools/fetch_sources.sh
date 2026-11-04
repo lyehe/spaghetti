@@ -6,11 +6,11 @@ set -euo pipefail
 PC=https://code.playcanvas.com/examples_data/example_sunnyvale
 RB=https://raw.githubusercontent.com/microsoft/Microsoft-Rocketbox/master/Assets
 
-mkdir -p spaces/sunnyvale assets/hero/src
+mkdir -p assets/spaces/sunnyvale assets/hero/src
 
 # Sunnyvale Heritage Park capture (CC-BY 4.0, zeitgeistarchivescans) + its collision mesh
-curl -fL -o spaces/sunnyvale/scene.sog     "$PC/sunnyvale.sog"
-curl -fL -o spaces/sunnyvale/collision.glb "$PC/sunnyvale.glb"
+curl -fL -o assets/spaces/sunnyvale/scene.sog     "$PC/sunnyvale.sog"
+curl -fL -o assets/spaces/sunnyvale/collision.glb "$PC/sunnyvale.glb"
 
 # Microsoft Rocketbox avatar Male_Adult_12 + mocap clips (MIT)
 A="$RB/Avatars/Adults/Male_Adult_12"

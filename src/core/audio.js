@@ -114,6 +114,11 @@ export class Audio {
         s.start(t, Math.random()); s.stop(t + 0.7); lfo.start(t); lfo.stop(t + 0.7);
     }
 
+    // one wet chew (open-mouthed, loud: he is really going at it)
+    munch(amount = 1) {
+        this.noise(0.07 + Math.random() * 0.04, { type: 'bandpass', freq: 380 + Math.random() * 260, q: 2.5, gain: 0.22 * amount });
+    }
+
     chomp() {
         for (let i = 0; i < 3; i++) setTimeout(() => this.noise(0.09, { type: 'bandpass', freq: 250 + Math.random() * 150, q: 3, gain: 0.5 }), i * 140);
     }

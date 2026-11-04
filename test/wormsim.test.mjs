@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WormSim, P, BOUND, FREE, CLING, RETURN } from '../src/sim/wormsim.js';
-import { Grid } from '../src/grid.js';
-import { Creature } from '../src/creature.js';
+import { Grid } from '../src/world/grid.js';
+import { Creature } from '../src/actors/monsters/creature.js';
 
 const DT = 1 / 60;
 

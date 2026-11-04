@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Grid } from '../src/grid.js';
-import { Creature, THIGH, SHIN, UPPER_ARM, FOREARM } from '../src/creature.js';
+import { Grid } from '../src/world/grid.js';
+import { Creature, THIGH, SHIN, UPPER_ARM, FOREARM } from '../src/actors/monsters/creature.js';
 
 const DT = 1 / 60;
 const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);

@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
-import { WormSim } from './sim/wormsim.js';
-import { handle } from './sim/noodleworker.js';
+import { WormSim } from './wormsim.js';
+import { handle } from './noodleworker.js';
 
 // Main-thread side of the noodle simulation: one GPU mesh per monster, all sims stepped in one
 // worker message per frame (or inline for debugging). Each body exposes boundCount / eaten / loose
@@ -16,7 +16,7 @@ export class NoodleHost {
         this.material = NoodleHost.makeMaterial();
         if (useWorker && typeof Worker !== 'undefined') {
             try {
-                this.worker = new Worker(new URL('./sim/noodleworker.js', import.meta.url), { type: 'module' });
+                this.worker = new Worker(new URL('./noodleworker.js', import.meta.url), { type: 'module' });
                 this.worker.onmessage = (e) => this.onResult(e.data);
                 this.worker.onerror = (e) => { console.error('noodle worker failed; running inline', e.message); this.worker = null; this.pending = false; };
             } catch (err) { this.worker = null; }
@@ -85,7 +85,7 @@ export class NoodleHost {
         if (this.worker) this.worker.postMessage(msg); else handle(msg, () => {});
     }
 
-    // drivers: Map id -> { bones, x, z, walking, speed, mouth: [x,y,z] }
+    // drivers: Map id -> { bones, x, z, walking, speed, mouth: [x,y,z], fork: [tip xyz, axis xyz, side xyz, roll], fist: [x,y,z] }
     update(dt, drivers) {
         this.accDt += dt;
         if (this.pending) return;
@@ -93,7 +93,7 @@ export class NoodleHost {
         for (const [id, b] of this.bodies) {
             const d = drivers.get(id);
             if (!d || !b.buffer) continue;
-            sims.push({ id, bones: d.bones.slice(), cx: d.x, cz: d.z, walking: d.walking, speed: d.speed, mouth: d.mouth, events: b.events, buffer: b.buffer });
+            sims.push({ id, bones: d.bones.slice(), cx: d.x, cz: d.z, walking: d.walking, speed: d.speed, mouth: d.mouth, fork: d.fork, fist: d.fist, events: b.events, buffer: b.buffer });
             if (this.worker) transfer.push(b.buffer);
             b.events = [];
             if (this.worker) b.buffer = null;

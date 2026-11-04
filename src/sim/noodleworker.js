@@ -1,6 +1,6 @@
 // Worker hosting one WormSim per monster. Steps them all and builds their meshes off the main thread.
 import { WormSim, P, FREE, CLING, RETURN } from './wormsim.js';
-import { Grid } from '../grid.js';
+import { Grid } from '../world/grid.js';
 
 const FIXED = 1 / 60;
 const sims = new Map();
@@ -36,12 +36,15 @@ export function handle(m, post) {
             if (ev.type === 'hit') s.released += sim.hit(ev.p[0], ev.p[1], ev.p[2], ev.d[0], ev.d[1], ev.d[2], ev.r, !!ev.any);
             else if (ev.type === 'chunk') s.released += sim.chunk(ev.p[0], ev.p[1], ev.p[2], ev.d[0], ev.d[1], ev.d[2], ev.n);
             else if (ev.type === 'collapse') sim.collapse(ev.d[0], ev.d[1], ev.d[2]);
-            else if (ev.type === 'slurp') for (const w of ev.ids) { const st = sim.state[w]; if (st === FREE || st === CLING || st === RETURN) sim.slurp(w); }
+            else if (ev.type === 'slurp') for (const w of ev.ids) { const st = sim.state[w]; if (st === FREE || st === CLING || st === RETURN) sim.slurp(w, ev.anchor || 0); }
+            else if (ev.type === 'feed') sim.feed(ev.anchor);
+            else if (ev.type === 'drop') sim.drop(ev.anchor);
             else if (ev.type === 'reset') sim.placeAll();
             else if (ev.type === 'reform') sim.reform();
         }
         sim.setCreature(s.bones, s.cx, s.cz, s.walking, s.speed);
         sim.setMouth(s.mouth[0], s.mouth[1], s.mouth[2]);
+        sim.setFork(s.fork); sim.setFist(s.fist);
     }
     acc += Math.min(m.dt, 0.1);
     let n = 0;

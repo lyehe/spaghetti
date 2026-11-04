@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
-import { WormSim } from './sim/wormsim.js';
-import { Grid } from './grid.js';
+import { WormSim } from '../sim/wormsim.js';
+import { Grid } from '../world/grid.js';
 
 const FIXED = 1 / 60;
 
@@ -23,7 +23,7 @@ export class Worms {
         };
         if (useWorker && typeof Worker !== 'undefined') {
             try {
-                this.worker = new Worker(new URL('./sim/worker.js', import.meta.url), { type: 'module' });
+                this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
                 this.worker.onmessage = (e) => this.onWorker(e.data);
                 this.worker.onerror = (e) => { console.error('worm worker failed, running inline', e.message); this.goInline(init); };
                 this.worker.postMessage({ type: 'init', ...init, grid: { ...init.grid, cells: init.grid.cells.slice() } });

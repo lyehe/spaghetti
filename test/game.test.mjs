@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Grid } from '../src/grid.js';
-import { Creature } from '../src/creature.js';
+import { Grid } from '../src/world/grid.js';
+import { Creature } from '../src/actors/monsters/creature.js';
 import { WormSim, P, BOUND, FREE, EATEN, SLURP } from '../src/sim/wormsim.js';
-import { FlyingSpaghettiMonster } from '../src/boss.js';
+import { FlyingSpaghettiMonster } from '../src/actors/monsters/boss.js';
 import { handle } from '../src/sim/noodleworker.js';
 
 const DT = 1 / 60;
@@ -60,6 +60,39 @@ test('eating: loose noodles get slurped into the mouth and disappear', () => {
     sim.buildMesh(f, u);
     const v = ids[0] * P * 8;
     assert.equal(f[v * 7 + 1], -50);
+    assert.ok(Number.isFinite(sim.pos.reduce((a, b) => a + b, 0)));
+});
+
+test('eating with the fork: strands wind onto the tines, hang off it, then get sucked into a mouth high above', () => {
+    const lv = level();
+    const c = new Creature(lv, { scale: 0.95, behavior: 'flee' });
+    c.dormant = true;
+    const sim = new WormSim({ count: 120, grid: lv, bones: c.boneData, coreBones: c.coreBones, boneWeights: c.boneWeight, style: 'pasta', scale: 0.95, squishy: true, bodyCollisions: false });
+    const player = { pos: { x: c.x, z: c.z + 40 } };
+    let t = 0;
+    const tick = (n, each) => { for (let k = 0; k < n; k++) { t += DT; each?.(); c.update(DT, player, sim.boundFraction, t); sim.setCreature(c.boneData, c.x, c.z, false, 0); sim.step(DT); } };
+    tick(30);
+    sim.collapse();
+    tick(150);
+    const any = sim.findEdible(c.x, 0.05, c.z, 1.6, 1)[0], o = any * P * 3 + (P >> 1) * 3;
+    const tip = [sim.pos[o], 0.06, sim.pos[o + 2]];
+    const ids = sim.findEdible(tip[0], 0.06, tip[2], 0.5, 5);          // what the tines land among
+    assert.ok(ids.length >= 3, `found only ${ids.length} edible noodles`);
+    sim.setFork([...tip, 0, -1, 0, 1, 0, 0, 0]);
+    for (const w of ids) sim.slurp(w, 1);
+    // twirl in place, then lift the fork 1.8 m up to the mouth
+    tick(30, () => { sim.fork[9] += 0.6; });
+    const wound = ids.map(w => sim.slurpN[w]);
+    assert.ok(wound.every(n => n >= 5), `strands should wind onto the tines: ${wound}`);
+    tick(30, () => { sim.fork[1] = Math.min(1.85, sim.fork[1] + 0.07); });
+    tick(45);                                                          // let them swing down
+    const hang = ids.map(w => { const e = w * P * 3 + (P - 1) * 3; return sim.fork[1] - sim.pos[e + 1]; });
+    assert.ok(hang.every(h => h > 0.2), `the loose ends should dangle below the fork: ${hang.map(h => h.toFixed(2))}`);
+    const mouth = [tip[0], 1.9, tip[2] + 0.05];
+    sim.setMouth(...mouth);
+    sim.feed(1);
+    tick(150);
+    assert.equal(ids.filter(w => sim.state[w] === EATEN).length, ids.length, `every strand should be eaten: ${ids.map(w => sim.state[w] + '/' + sim.slurpN[w])}`);
     assert.ok(Number.isFinite(sim.pos.reduce((a, b) => a + b, 0)));
 });
 
@@ -133,8 +166,8 @@ test('every landed fork strike knocks off a chunk, even after that side is strip
 });
 
 test('gameplay loop: the hero strikes a monster down with the fork, then eats it', async () => {
-    const { Hero } = await import('../src/hero.js');
-    const { forkHit } = await import('../src/combat.js');
+    const { Hero } = await import('../src/actors/hero/hero.js');
+    const { forkHit } = await import('../src/game/combat.js');
     const lv = level();
     const start = lv.cellCenter(20, 8);
     const c = new Creature(lv, { scale: 0.95, start });           // held still for the test (chase + dormant)
@@ -169,16 +202,32 @@ test('gameplay loop: the hero strikes a monster down with the fork, then eats it
     assert.ok(strikes <= 5, `took ${strikes} strikes to break it`);
     sim.collapse();
     for (let k = 0; k < 90; k++) tick();
-    // eat: aim at the pile, slurp what is near the fork when it lifts
+    // eat, like the game does: forkful, fistful, forkful. 'grab' winds what is near the tines (or the
+    // fist) onto it, 'feed' sends it to the mouth
     const before = sim.eatenCount;
+    let fed = 0, grabbed = 0;
     for (let bite = 0; bite < 3; bite++) {
-        hero.eat([c.x, 0.2, c.z]);
-        let slurped = false;
+        const kind = bite % 2 ? 'hand' : 'fork';
+        const pile = sim.findEdible(c.x, 0.1, c.z, 1.6, 1)[0];
+        const o = pile * P * 3 + (P >> 1) * 3;
+        assert.ok(hero.eat([sim.pos[o], 0.05, sim.pos[o + 2]], kind));
+        const anchor = kind === 'fork' ? 1 : 2;
         while (hero.action) {
             tick();
-            if (!slurped && hero.action && hero.action.t > 0.6) { slurped = true; for (const w of sim.findEdible(c.x, 0.2, c.z, 1.2, 5)) sim.slurp(w); }
+            sim.setFork(hero.forkAnchor); sim.setFist(hero.fist);
+            for (const ev of hero.events) {
+                if (ev === 'grab') {
+                    const tip = kind === 'fork' ? hero.forkTip : hero.fist, tg = hero.action.target;
+                    const at = Math.hypot(tip[0] - tg[0], tip[2] - tg[2]) < 0.35 ? tip : tg;      // as the game does
+                    for (const w of sim.findEdible(at[0], at[1], at[2], 0.55, 6)) { sim.slurp(w, anchor); grabbed++; }
+                }
+                if (ev === 'feed') { sim.feed(anchor); fed++; }
+            }
         }
         for (let k = 0; k < 30; k++) tick();
     }
-    assert.ok(sim.eatenCount - before >= 10, `three bites ate only ${sim.eatenCount - before} strands`);
+    for (let k = 0; k < 60; k++) tick();                                // the last mouthful is still being slurped up
+    assert.equal(fed, 3);
+    assert.ok(grabbed >= 9, `three bites picked up only ${grabbed} strands`);
+    assert.ok(sim.eatenCount - before >= grabbed - 1, `picked up ${grabbed} strands but ate only ${sim.eatenCount - before}`);
 });

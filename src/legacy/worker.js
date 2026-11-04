@@ -1,6 +1,6 @@
 // Runs the worm simulation + tube mesh build off the main thread.
-import { WormSim } from './wormsim.js';
-import { Grid } from '../grid.js';
+import { WormSim } from '../sim/wormsim.js';
+import { Grid } from '../world/grid.js';
 
 const FIXED = 1 / 60;
 const MAX_STEPS = 2;

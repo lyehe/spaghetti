@@ -40,6 +40,9 @@ export class WormSim {
         this.scale = scale;
         this.squishy = squishy;
         this.mouth = new Float32Array([0, -100, 0]);   // where slurped strands are pulled to (set by the game)
+        // the fork the hero eats with: tine tip, handle axis (toward the tip), tine plane side, roll (rad)
+        this.fork = new Float32Array([0, -100, 0, 0, 1, 0, 1, 0, 0, 0]);
+        this.fist = new Float32Array([0, -100, 0]);    // the hero's left palm
         this.bodyCollisions = bodyCollisions;   // body worms push each other apart (costs ~3ms/step)
         this.N = count;
         this.grid = grid;
@@ -88,7 +91,9 @@ export class WormSim {
         this.ref = new Float32Array(N * 3);     // slowly rotating reference for the wave plane
         this.colA = new Float32Array(N * 3);
         this.coat = new Float32Array(N);       // pasta: how much tomato sauce coats this strand
-        this.slurpN = new Uint8Array(N);       // pasta: how many points of the strand are already eaten
+        this.slurpN = new Uint8Array(N);       // pasta: how many points of the strand are pinned (eaten, or wound on the fork / in the fist)
+        this.slurpA = new Uint8Array(N);       // ... to which anchor: 0 mouth, 1 fork tines, 2 left fist
+        this.slurpRate = new Float32Array(N);  // how fast the mouth sucks this strand in (m/s)
         this.anchorA = new Float32Array(N * 3);
         this.anchorB = new Float32Array(N * 3);
         this.anchorV = new Float32Array(N * 3);   // anchor displacement per step (body motion at the attachment)
@@ -596,6 +601,7 @@ export class WormSim {
                     const diff = (d - seg) / d * (this.squishy ? 0.5 : 1);   // squishy noodles give a little
                     let wa = 0.5, wb = 0.5;
                     if (i === 0 && pinHead) { wa = 0; wb = 1; }
+                    else if (st === SLURP && i < this.slurpK(w)) { if (i + 1 < this.slurpK(w)) continue; wa = 0; wb = 1; }
                     else if (cl) {
                         const sa = stuck[sp0 + i] !== 0, sb = stuck[sp0 + i + 1] !== 0;
                         if (sa && sb) continue;
@@ -610,15 +616,18 @@ export class WormSim {
                     // The rest bend drifts slowly along the body, so curls travel and change shape.
                     const c0 = this.curl[w], ph = this.phase[w], tm = this.time;
                     const k2 = st === BOUND ? 0.4 * Math.min(1, this.bindAge[w] / 1.5) : 0.12;   // freshly re-attached worms are limp and flop down
+                    const K = st === SLURP ? this.slurpK(w) : 0;      // driven points (held / being drawn in) don't bend back
                     for (let i = 0; i < P - 2; i++) {
+                        if (i + 2 < K) continue;
                         const o = base + i * 3, q = o + 6;
                         const th = c0 * (0.55 + 0.45 * Math.sin(i * 0.55 - tm * 0.7 + ph));
                         const rest = seg * 2 * Math.cos(th);
                         const dx = pos[q] - pos[o], dy = pos[q + 1] - pos[o + 1], dz = pos[q + 2] - pos[o + 2];
                         const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
                         const diff = (d - rest) / d * (d < rest ? 0.22 : k2);
-                        pos[o] += dx * diff; pos[o + 1] += dy * diff; pos[o + 2] += dz * diff;
-                        pos[q] -= dx * diff; pos[q + 1] -= dy * diff; pos[q + 2] -= dz * diff;
+                        const wo = i < K ? 0 : 1, wq = i < K ? 2 : 1;
+                        pos[o] += dx * diff * wo; pos[o + 1] += dy * diff * wo; pos[o + 2] += dz * diff * wo;
+                        pos[q] -= dx * diff * wq; pos[q + 1] -= dy * diff * wq; pos[q + 2] -= dz * diff * wq;
                     }
                 }
                 if (st === BOUND) {
@@ -661,6 +670,34 @@ export class WormSim {
     get eatenCount() { let n = 0; for (let w = 0; w < this.N; w++) if (this.state[w] === EATEN) n++; return n; }
 
     setMouth(x, y, z) { this.mouth[0] = x; this.mouth[1] = y; this.mouth[2] = z; }
+    setFork(a) { if (a) this.fork.set(a); }
+    setFist(a) { if (a) { this.fist[0] = a[0]; this.fist[1] = a[1]; this.fist[2] = a[2]; } }
+
+    // where pinned point i of a strand held by anchor A sits
+    slot(w, i, A, out) {
+        if (A === 0) { out[0] = this.mouth[0]; out[1] = this.mouth[1]; out[2] = this.mouth[2]; return; }
+        if (A === 1) {
+            // wound around the tines in a coil that turns with the fork's roll
+            const F = this.fork, t = 0.045 + Math.min(0.13, 0.011 * i), ang = F[9] + i * 1.25 + this.phase[w] * 3;
+            const ax = F[3], ay = F[4], az = F[5], sx = F[6], sy = F[7], sz = F[8];
+            const zx = ay * sz - az * sy, zy = az * sx - ax * sz, zz = ax * sy - ay * sx;
+            const r = 0.03 + 0.006 * ((i + w) % 3), c = Math.cos(ang) * r, sn = Math.sin(ang) * r * 0.75;
+            out[0] = F[0] - ax * t + sx * c + zx * sn; out[1] = F[1] - ay * t + sy * c + zy * sn; out[2] = F[2] - az * t + sz * c + zz * sn;
+            return;
+        }
+        // a fistful: bunched in the palm, bulging out between the fingers
+        const h = (w * 7 + i * 13) % 17 / 17, g = (w * 11 + i * 5) % 13 / 13, r = 0.025 + 0.02 * ((i + w) % 4) / 3;
+        const th = h * Math.PI * 2, ph = (g - 0.5) * Math.PI;
+        out[0] = this.fist[0] + Math.cos(ph) * Math.cos(th) * r; out[1] = this.fist[1] + Math.sin(ph) * r; out[2] = this.fist[2] + Math.cos(ph) * Math.sin(th) * r;
+    }
+
+    // how many leading points of a slurping strand are driven (pinned + the one being drawn in)
+    slurpK(w) { const n = this.slurpN[w], A = this.slurpA[w]; return n < (A === 1 ? 9 : A === 2 ? 7 : P) ? n + 1 : n; }
+
+    // hand strands over from the fork / fist to the mouth (the bite): they are sucked in from the held end
+    feed(A) { for (let w = 0; w < this.N; w++) if (this.state[w] === SLURP && this.slurpA[w] === A) { this.slurpA[w] = 0; this.slurpN[w] = 0; } }
+    // let go of whatever an anchor holds (the eating was interrupted)
+    drop(A) { for (let w = 0; w < this.N; w++) if (this.state[w] === SLURP && this.slurpA[w] === A) { this.state[w] = FREE; this.timer[w] = this.holding ? 999 : 1 + this.rand() * 2; } }
 
     // loose strands (knocked off or from a destroyed monster) with any point near p
     findEdible(px, py, pz, radius, max = 6) {
@@ -678,36 +715,72 @@ export class WormSim {
     }
 
     // start slurping a strand: it is pulled into the mouth from its nearest end
-    slurp(w) {
+    // anchor: 0 straight into the mouth, 1 onto the fork, 2 into the fist
+    slurp(w, A = 0) {
         const st = this.state[w];
         if (st === BOUND) this.boundCount--;
         if (this.stuckN[w]) this.unstickAll(w);
+        // pick it up by the end nearest the anchor: flip the strand so that end is point 0
+        const tmp = [0, 0, 0];
+        this.slot(w, 0, A, tmp);
+        const base = w * P * 3, e = base + (P - 1) * 3, pos = this.pos;
+        const d0 = Math.hypot(pos[base] - tmp[0], pos[base + 1] - tmp[1], pos[base + 2] - tmp[2]);
+        const d1 = Math.hypot(pos[e] - tmp[0], pos[e + 1] - tmp[1], pos[e + 2] - tmp[2]);
+        if (d1 < d0) {
+            for (let i = 0; i < P >> 1; i++) {
+                const a = base + i * 3, b = base + (P - 1 - i) * 3;
+                for (let k = 0; k < 3; k++) {
+                    let t = pos[a + k]; pos[a + k] = pos[b + k]; pos[b + k] = t;
+                    t = this.prev[a + k]; this.prev[a + k] = this.prev[b + k]; this.prev[b + k] = t;
+                }
+                const pa = w * P + i, pb = w * P + P - 1 - i, t = this.prad[pa]; this.prad[pa] = this.prad[pb]; this.prad[pb] = t;
+            }
+        }
         this.state[w] = SLURP;
+        this.slurpA[w] = A;
         this.slurpN[w] = 0;
+        this.slurpRate[w] = 1.5 + this.rand() * 1.4;
     }
 
     stepSlurp(dt) {
-        const pos = this.pos, prev = this.prev, m = this.mouth;
+        const pos = this.pos, prev = this.prev, q = this._slotTmp || (this._slotTmp = [0, 0, 0]);
         for (let w = 0; w < this.N; w++) {
             if (this.state[w] !== SLURP) continue;
-            const base = w * P * 3;
+            const base = w * P * 3, A = this.slurpA[w];
             let n = this.slurpN[w];
-            for (let i = 0; i < n; i++) {                 // eaten part sits in the mouth
+            for (let i = 0; i < n; i++) {                 // pinned: in the mouth / wound on the tines / in the fist
+                this.slot(w, i, A, q);
                 const o = base + i * 3;
-                pos[o] = m[0]; pos[o + 1] = m[1]; pos[o + 2] = m[2];
-                prev[o] = m[0]; prev[o + 1] = m[1]; prev[o + 2] = m[2];
+                pos[o] = q[0]; pos[o + 1] = q[1]; pos[o + 2] = q[2];
+                prev[o] = q[0]; prev[o + 1] = q[1]; prev[o + 2] = q[2];
             }
-            const o = base + n * 3;                        // the next point is sucked in
-            const dx = m[0] - pos[o], dy = m[1] - pos[o + 1], dz = m[2] - pos[o + 2];
-            const d = Math.hypot(dx, dy, dz);
-            const step = 5 * dt;
-            if (d <= step + 0.04) {
-                this.slurpN[w] = ++n;
-                if (n >= P) { this.state[w] = EATEN; continue; }
-            } else {
-                const k = step / d;
-                pos[o] += dx * k; pos[o + 1] += dy * k; pos[o + 2] += dz * k;
-                prev[o] = pos[o]; prev[o + 1] = pos[o + 1]; prev[o + 2] = pos[o + 2];
+            const cap = A === 1 ? 9 : A === 2 ? 7 : P;    // the rest of the strand dangles
+            if (n < cap) {
+                this.slot(w, n, A, q);
+                const o = base + n * 3;                    // the next point is drawn in
+                const dx = q[0] - pos[o], dy = q[1] - pos[o + 1], dz = q[2] - pos[o + 2];
+                const d = Math.hypot(dx, dy, dz);
+                const step = (A === 0 ? this.slurpRate[w] : Math.max(3.2, d * 7)) * dt;
+                if (d <= step + 0.03) {
+                    this.slurpN[w] = ++n;
+                    if (A === 0 && n >= P) { this.state[w] = EATEN; continue; }
+                } else {
+                    const k = step / d;
+                    pos[o] += dx * k; pos[o + 1] += dy * k; pos[o + 2] += dz * k;
+                    prev[o] = pos[o]; prev[o + 1] = pos[o + 1]; prev[o + 2] = pos[o + 2];
+                }
+            }
+            // follow the leader: the hanging rest is lifted link by link and can't stretch into a rubber band
+            const L = this.seg[w] * 1.04;
+            for (let i = Math.max(1, this.slurpK(w)); i < P; i++) {
+                const a = base + (i - 1) * 3, o = base + i * 3;
+                const dx = pos[o] - pos[a], dy = pos[o + 1] - pos[a + 1], dz = pos[o + 2] - pos[a + 2];
+                const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (d <= L) continue;
+                const k = L / d;
+                const nx = pos[a] + dx * k, ny = pos[a + 1] + dy * k, nz = pos[a + 2] + dz * k;
+                prev[o] += nx - pos[o]; prev[o + 1] += ny - pos[o + 1]; prev[o + 2] += nz - pos[o + 2];   // dragged, not flung
+                pos[o] = nx; pos[o + 1] = ny; pos[o + 2] = nz;
             }
         }
     }
@@ -725,7 +798,8 @@ export class WormSim {
                     const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
                     if (d <= seg * (this.squishy ? 1.25 : 1.02)) continue;   // only fix (excess) stretching
                     let wa = 0.5, wb = 0.5;
-                    if (cl) {
+                    if (st === SLURP && i < this.slurpK(w)) { if (i + 1 < this.slurpK(w)) continue; wa = 0; wb = 1; }
+                    else if (cl) {
                         const sa = stuck[sp0 + i] !== 0, sb = stuck[sp0 + i + 1] !== 0;
                         if (sa && sb) continue;
                         if (sa) { wa = 0; wb = 1; } else if (sb) { wa = 1; wb = 0; }
@@ -1108,7 +1182,7 @@ export class WormSim {
                 v += P * S;
                 continue;
             }
-            const eatenPts = wst === SLURP ? this.slurpN[w] : 0;
+            const eatenPts = wst === SLURP && this.slurpA[w] === 0 ? this.slurpN[w] : 0;
             const pasta = this.style === 'pasta', coat = this.coat[w], ph = this.phase[w];
             let nx = 0, ny = 1, nz = 0;
             for (let i = 0; i < P; i++) {

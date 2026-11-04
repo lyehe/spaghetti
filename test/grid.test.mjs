@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Grid } from '../src/grid.js';
-import { Creature } from '../src/creature.js';
+import { Grid } from '../src/world/grid.js';
+import { Creature } from '../src/actors/monsters/creature.js';
 import { WormSim, P } from '../src/sim/wormsim.js';
 
 test('pillars stand against walls inside open cells', () => {

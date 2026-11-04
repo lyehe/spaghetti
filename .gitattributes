@@ -3,3 +3,5 @@
 *.sog binary
 *.glb binary
 *.png binary
+*.wasm binary
+vendor/** -diff linguist-vendored

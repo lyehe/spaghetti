@@ -5,27 +5,30 @@
 //   collision:  .json {positions, indices} or .obj, made by tools/build_space.py (or by hand in Blender)
 //   start:      player spawn [x, z];   wallH: ceiling height (worms cling up to here)
 //   credit:     shown on the title screen (the captures are CC-BY)
+import * as pc from 'playcanvas';
 import { proceduralKitchen } from './collision.js';
 
 export const SPACES = {
     park: {
         title: 'Heritage Park',
         // a real photogrammetry capture, cropped to a 32 x 32 m play area by tools/splat_crop.py:
-        //   splat_crop.py spaces/sunnyvale/scene.sog spaces/sunnyvale/collision_raw.obj spaces/sunnyvale --flip-z --box -16 -20 14 10 --view 12 --min-alpha 0.15 --keep-far 0.2
+        //   splat_crop.py assets/spaces/sunnyvale/scene.sog assets/spaces/sunnyvale/collision_raw.obj assets/spaces/sunnyvale --flip-z --box -16 -20 14 10 --view 12 --min-alpha 0.15 --keep-far 0.2
         // collision_raw.obj is the capture's own collision mesh (decoded by tools/blender_glb2obj.py)
-        splat: 'spaces/sunnyvale/scene.compressed.ply',
-        collision: 'spaces/sunnyvale/collision.json',
+        splat: 'assets/spaces/sunnyvale/scene.compressed.ply',
+        collision: 'assets/spaces/sunnyvale/collision.json',
         transform: { rotation: [0, 0, 180], position: [17.0, -0.27557, 21.0] },
         start: [16, 16], wallH: 40, terrain: true,       // open sky: no ceiling to cling to
         sky: [0.66, 0.76, 0.88], shadowIntensity: 0.55,
+        // drifting pollen (PlayCanvas gsplat weather): slow, sparse, warm
+        weather: { extents: new pc.Vec3(10, 6, 10), density: 0.6, speed: 0.06, drift: 0.35, opacity: 0.55, color: [1, 0.96, 0.85], particleMinSize: 0.004, particleMaxSize: 0.009, elongate: 1 },
         lighting: { ambient: [0.55, 0.55, 0.58], keyIntensity: 1.7, keyColor: [1, 0.95, 0.86], keyAngles: [50, 140, 0], fillIntensity: 0.45 },
         credit: 'Sunnyvale Heritage Park Museum scan by zeitgeistarchivescans, CC-BY 4.0'
     },
     apartment: {
         title: 'The Apartment',
-        splat: 'spaces/apartment/scene.sog',
-        collision: 'spaces/apartment/collision.json',
-        // tools/build_space.py spaces/apartment/scene.sog spaces/apartment --flip-x --crop -13.5 -0.5 -0.5 9.5 --min-pts 40 --wall-h 3.0
+        splat: 'assets/spaces/apartment/scene.sog',
+        collision: 'assets/spaces/apartment/collision.json',
+        // tools/build_space.py assets/spaces/apartment/scene.sog assets/spaces/apartment --flip-x --crop -13.5 -0.5 -0.5 9.5 --min-pts 40 --wall-h 3.0
         transform: { rotation: [180, 0, 0], position: [14.0, 0.1249, 1.0] },
         start: [8.625, 4.625], wallH: 3.0,
         lighting: { ambient: [0.5, 0.47, 0.43], keyIntensity: 1.5, keyAngles: [60, 200, 0] },

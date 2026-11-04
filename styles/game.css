@@ -1,0 +1,52 @@
+/* AL DENTE: HUD, overlay and the ?classic camcorder look */
+html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+#app { display: block; width: 100%; height: 100%; }
+.hud { position: fixed; pointer-events: none; font-family: "Courier New", monospace; color: #f2f2e8;
+       text-shadow: 0 0 4px rgba(0,0,0,0.9), 1px 1px 0 #000; letter-spacing: 0.08em; }
+#rec { top: 24px; left: 32px; font-size: 22px; }
+#rec .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: #ff2a2a;
+            margin-right: 8px; animation: blink 1s steps(1) infinite; vertical-align: -1px; }
+@keyframes blink { 50% { opacity: 0; } }
+#timecode { top: 24px; right: 32px; font-size: 22px; }
+#batt { top: 56px; right: 32px; font-size: 14px; opacity: 0.8; }
+#ammo { bottom: 28px; right: 32px; font-size: 20px; }
+#stamwrap { bottom: 34px; left: 32px; width: 160px; height: 6px; border: 1px solid rgba(255,255,240,0.6); }
+#stamina { height: 100%; width: 100%; background: rgba(255,255,240,0.8); }
+#fps { bottom: 50px; left: 32px; font-size: 11px; opacity: 0.5; }
+#msg { top: 30%; width: 100%; text-align: center; font-size: 22px; opacity: 0; transition: opacity 0.2s; }
+#cross { top: 50%; left: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; }
+#cross::before, #cross::after { content: ""; position: absolute; background: rgba(255,255,255,0.75); }
+#cross::before { left: 6px; top: 0; width: 2px; height: 14px; }
+#cross::after { top: 6px; left: 0; height: 2px; width: 14px; }
+#frame { inset: 14px; border: 2px solid rgba(255,255,255,0.18); border-radius: 4px; }
+#scan { inset: 0; background: repeating-linear-gradient(to bottom, rgba(0,0,0,0.12) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; }
+#grain { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: pixelated; mix-blend-mode: overlay; }
+#overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+           background: rgba(10,10,6,0.72); color: #eee8c8; font-family: "Courier New", monospace; text-align: center;
+           cursor: pointer; padding: 16px; box-sizing: border-box; }
+#title { font-size: clamp(28px, 6vw, 56px); letter-spacing: 0.15em; margin-bottom: 18px; color: #f0e6a0; }
+#sub { font-size: 15px; line-height: 1.6; max-width: 620px; opacity: 0.9; }
+/* ---- fork game HUD (hidden in ?classic) */
+#game-hud { display: none; }
+#game-hud .g { position: fixed; pointer-events: none; font-family: Georgia, "Times New Roman", serif; color: #fff6e0;
+               text-shadow: 0 2px 4px rgba(0,0,0,0.9); }
+#g-health { left: 24px; bottom: 26px; width: 220px; }
+#g-health .bar, #g-boss .bar { height: 12px; border: 2px solid rgba(255,246,224,0.8); border-radius: 7px; overflow: hidden; background: rgba(0,0,0,0.35); }
+#g-health .fill { height: 100%; width: 100%; background: linear-gradient(90deg, #d8a23a, #f3d36b); }
+#g-health .lbl, #g-boss .lbl { font-size: 14px; letter-spacing: 0.08em; margin-bottom: 4px; }
+#g-stats { right: 24px; top: 20px; text-align: right; font-size: 18px; line-height: 1.5; }
+#g-boss { left: 50%; top: 22px; width: min(520px, 70vw); transform: translateX(-50%); display: none; }
+#g-boss .fill { height: 100%; width: 100%; background: linear-gradient(90deg, #8a1c0f, #d63b1f); }
+#g-hint { left: 50%; bottom: 30px; transform: translateX(-50%); font-size: 16px; opacity: 0.85; text-align: center; }
+#g-card { left: 50%; top: 32%; transform: translateX(-50%); font-size: clamp(22px, 4vw, 40px); text-align: center; opacity: 0;
+          transition: opacity 0.4s; letter-spacing: 0.04em; width: 90vw; }
+#g-card small { display: block; font-size: 0.45em; opacity: 0.85; margin-top: 8px; letter-spacing: 0.02em; }
+#g-reticle { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,246,224,0.8); }
+body.fork #overlay { background: radial-gradient(ellipse at center, rgba(70,20,8,0.82), rgba(15,5,2,0.94)); font-family: Georgia, serif; color: #fff1d6; }
+body.fork #title { color: #f6cf6a; letter-spacing: 0.06em; }
+
+/* touch: action buttons (the movement / look joysticks are drawn by player.js) */
+.touch-btn { position: fixed; display: none; width: 84px; height: 84px; border-radius: 50%; border: 2px solid rgba(255,246,224,0.7);
+             background: rgba(120,30,10,0.55); color: #fff6e0; font: bold 14px Georgia, serif; letter-spacing: 0.05em;
+             touch-action: none; user-select: none; -webkit-user-select: none; z-index: 5; }
+.touch-btn:active { background: rgba(200,60,20,0.75); }

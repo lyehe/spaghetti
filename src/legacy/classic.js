@@ -1,12 +1,12 @@
 import * as pc from 'playcanvas';
 import { Level } from './level.js';
-import { Creature } from './creature.js';
+import { Creature } from '../actors/monsters/creature.js';
 import { Worms } from './worms.js';
 import { Player } from './player.js';
 import { Gun } from './gun.js';
-import { Audio } from './audio.js';
-import { CELL } from './map.js';
-import { Lens } from './lens.js';
+import { Audio } from '../core/audio.js';
+import { CELL } from '../world/map.js';
+import { Lens } from '../core/lens.js';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');

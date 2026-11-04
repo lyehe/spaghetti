@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
-import { CELL, WALL_H } from './map.js';
-import { Grid } from './grid.js';
+import { CELL, WALL_H } from '../world/map.js';
+import { Grid } from '../world/grid.js';
 
 // ---------- procedural canvas textures ----------
 function rand(seed) {

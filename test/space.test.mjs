@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { CollisionMesh, proceduralKitchen, parseOBJ } from '../src/collision.js';
-import { Creature } from '../src/creature.js';
+import { CollisionMesh, proceduralKitchen, parseOBJ } from '../src/world/collision.js';
+import { Creature } from '../src/actors/monsters/creature.js';
 import { WormSim, P, BOUND } from '../src/sim/wormsim.js';
 
-const apt = () => { const j = JSON.parse(fs.readFileSync('spaces/apartment/collision.json', 'utf8')); return new CollisionMesh(j.positions, j.indices); };
+const apt = () => { const j = JSON.parse(fs.readFileSync('assets/spaces/apartment/collision.json', 'utf8')); return new CollisionMesh(j.positions, j.indices); };
 const APT_START = { x: 8.625, z: 4.625 };
 
 test('collision mesh: rays hit walls and furniture tops at the right distance', () => {
@@ -38,7 +38,7 @@ test('collision mesh -> occupancy grid: walls full height, tables low, open floo
 });
 
 test('OBJ collision meshes load the same as JSON', () => {
-    const obj = fs.readFileSync('spaces/apartment/collision.obj', 'utf8');
+    const obj = fs.readFileSync('assets/spaces/apartment/collision.obj', 'utf8');
     const a = parseOBJ(obj), b = apt();
     assert.equal(a.triCount, b.triCount);
 });
@@ -133,7 +133,7 @@ test('crushed monster: worms stay on the splat floor / furniture, never inside t
 
 // --- outdoor terrain (the park capture): no ceiling, uneven ground
 test('park terrain: ground follows the scan, bodies and worms stand on it, no ceiling', () => {
-    const j = JSON.parse(fs.readFileSync('spaces/sunnyvale/collision.json', 'utf8'));
+    const j = JSON.parse(fs.readFileSync('assets/spaces/sunnyvale/collision.json', 'utf8'));
     const g = new CollisionMesh(j.positions, j.indices).toGrid({ cell: 0.25, wallH: 40, terrain: true, start: { x: 16, z: 16 } });
     // the ground is not flat, but gentle where people walk
     const dist = g.distanceField({ x: 16, z: 16 });
